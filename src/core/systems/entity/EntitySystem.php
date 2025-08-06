@@ -170,10 +170,11 @@ class EntitySystem extends System
           $relativePath = str_replace('/', '\\', $relativePath); // Ensure correct namespace separators
           $relativePath = str_replace('.php', '', $relativePath); // Remove the .php extension
           // Construct the full class name with the appropriate namespace
-          $fullClassName = '\\core\\custom\\prefabs\\' . $relativePath;
+          $fullClassName = 'core\\custom\\prefabs\\' . $relativePath;
           if (class_exists($fullClassName)) {
             $reflectionClass = new ReflectionClass($fullClassName);
-            if ($reflectionClass->isSubclassOf(Actor::class) && !$reflectionClass->isAbstract()) { // must derive from Actor and not be abstract
+            if (($reflectionClass->isSubclassOf(Actor::class) || $reflectionClass->isSubclassOf(Entity::class))
+              && !$reflectionClass->isAbstract()) { // must derive from Actor or Entity and not be abstract (fully implemented entity)
               // type must be something unique that isn't just an NPC
               $type = $fullClassName::getNetworkTypeId();
               if ($type != EntityIds::NPC) {

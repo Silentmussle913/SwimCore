@@ -83,12 +83,18 @@ class SystemManager
     $this->systems[] = $this->eventSystem;
 
     $this->entitySystem = new EntitySystem($this->core);
-    $this->systems[] = $this->entitySystem;
+    // We need to init this first right away since we need our entities registered ASAP before our scene system inits and creates actors.
+    // It would probably make more sense to just construct the entity system before anything else, but that would change the order of tick updates.
+    // This has been in this order for 2 years now so I don't want to modify our servers update logic order, hence this hack.
+    $this->entitySystem->init();
 
-    // then init all the systems
+    // Then init all the systems (except the entity system we already did that, this is scuffed design deferring its addition to the systems array)
     foreach ($this->systems as $system) {
       $system->init();
     }
+
+    // Then add to systems array since we didn't want to double init it (this is scuffed)
+    $this->systems[] = $this->entitySystem;
   }
 
   public function updateTick(): void
