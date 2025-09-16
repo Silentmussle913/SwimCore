@@ -460,4 +460,9 @@ abstract class Scene
     return $this->canCraft;
   }
 
+  public function eventMessage(string $message, ...$args): void
+  {
+    // super generic message event function to be overridden by a derived class
+  }
+
 }

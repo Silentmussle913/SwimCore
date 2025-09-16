@@ -20,22 +20,31 @@ use pocketmine\world\World;
 class BlocksManager
 {
 
+  // Old array of array version
+  // int vectorHash => [self::BLOCK => Block $block, int self::TIME => $time, Vector3 self::POSITION => $vec]
+
+  /* Deprecated key const look up values for the old array structure
+    public const int TIME = 0;
+    public const int BLOCK = 1;
+    public const int POSITION = 2;
+  */
+
   /**
-   * key is Vector3
-   * @var Block[]
+   * @var BlockEntry[]
+   * @brief key is an int of a vector3 hash
    */
   private array $placedBlocks; // logs the blocks placed by player
+
+  /**
+   * @var BlockEntry[]
+   * @brief key is an int of a vector3 hash
+   */
+  private array $brokenMapBlocks; // logs the blocks that were part of the map and got broken
 
   /**
    * @var int[]
    */
   private array $allowedToBreakFromMap; // blocks the player is allowed to break in the map
-
-  /**
-   * key is Vector3
-   * @var Block[]
-   */
-  private array $brokenMapBlocks; // logs the blocks that were part of the map and got broken
 
   private bool $canPlaceBlocks;
   private bool $canBreakBlocks; // only applies to player placed blocks
@@ -48,9 +57,6 @@ class BlocksManager
   private int $brokenLifeTime;
   private int $placedLifeTime;
 
-  private const TIME = 0;
-  private const BLOCK = 1;
-
   private SwimCore $core;
   private Server $server;
 
@@ -58,7 +64,7 @@ class BlocksManager
    * key is Vector3
    * @var BlockTicker[]
    */
-  private array $chuncksToKeepAlive;
+  private array $chunksToKeepAlive;
 
   public function __construct
   (
@@ -76,7 +82,7 @@ class BlocksManager
     $this->placedBlocks = [];
     $this->brokenMapBlocks = [];
     $this->allowedToBreakFromMap = [];
-    $this->chuncksToKeepAlive = [];
+    $this->chunksToKeepAlive = [];
     $this->canPlaceBlocks = $canPlaceBlocks;
     $this->canBreakBlocks = $canBreakBlocks;
     $this->canBreakMapBlocks = $canBreakMapBlocks;
@@ -165,12 +171,13 @@ class BlocksManager
   /**
    * Adds a Vector3 object to an array using a hashed Vector3 key.
    * @param array $array The array to add to.
-   * @param Vector3 $vector The Vector3 object to add.
-   * @param mixed $item The item to add to the array.
+   * @param BlockEntry $entry The entry to add to the array.
    */
-  private function addItemToArrayWithVector3Key(array &$array, Vector3 $vector, mixed $item): void
+  private function addBlockEntryToArrayWithVector3Key(array &$array, BlockEntry $entry): void
   {
-    $array[PositionHelper::getVectorHashKey($vector)] = $item;
+    $key = PositionHelper::getVectorHashKey($entry->position);
+    $entry->key = $key;
+    $array[$key] = $entry;
   }
 
   public function handleBlockPlace(BlockPlaceEvent $event): void
@@ -178,7 +185,9 @@ class BlocksManager
     $time = $this->core->getServer()->getTick() + $this->placedLifeTime;
     if ($this->canPlaceBlocks) {
       foreach ($event->getTransaction()->getBlocks() as [$x, $y, $z, $block]) {
-        $this->addItemToArrayWithVector3Key($this->placedBlocks, new Vector3($x, $y, $z), [self::BLOCK => $block, self::TIME => $time]);
+        $vec = new Vector3($x, $y, $z);
+        $entry = new BlockEntry($vec, $block, $time);
+        $this->addBlockEntryToArrayWithVector3Key($this->placedBlocks, $entry);
       }
     } else {
       // how would you have blocks to place if the duel has block placements disabled?
@@ -209,10 +218,27 @@ class BlocksManager
 
     // if we can break map blocks, or we can break registered blocks and the block is registered, then we can just log and return
     // checking via state id is kinda sus
-    if ($this->canBreakMapBlocks || ($this->canBreakRegisteredBlocks && ($this->allowedToBreak($block->getTypeId()) || $this->allowedToBreak($block->getStateId())))) {
-      if (!$inPlacedBlocks) { // if the block we broke was not in the player placed blocks array, we log it as needs to be replaced since it was part of the map
-        $this->addItemToArrayWithVector3Key($this->brokenMapBlocks, $position, [self::BLOCK => $block, self::TIME => $time]);
+    if ($this->canBreakMapBlocks ||
+      ($this->canBreakRegisteredBlocks && ($this->allowedToBreak($block->getTypeId()) || $this->allowedToBreak($block->getStateId())))
+    ) {
+      // if the block we broke was not in the player placed blocks array, we log it as needs to be replaced since it was part of the map
+      if (!$inPlacedBlocks) {
+        $entry = new BlockEntry($position, $block, $time);
+        if (SwimCore::$DEBUG) {
+          $str = PositionHelper::toString($position);
+          echo("$str broken map block, OK!\n");
+        }
+        $this->addBlockEntryToArrayWithVector3Key($this->brokenMapBlocks, $entry);
         return true;
+      }
+    }
+
+    if (SwimCore::$DEBUG) {
+      $str = PositionHelper::toString($position);
+      if (!$inPlacedBlocks) {
+        echo("$str attempting breaking block but not in placed blocks, CANCEL!\n");
+      } else {
+        echo("$str breaking placed block, OK!\n");
       }
     }
 
@@ -224,7 +250,9 @@ class BlocksManager
   {
     $time = $this->server->getTick() + $this->placedLifeTime;
     $block = $event->getBlock();
-    $this->addItemToArrayWithVector3Key($this->placedBlocks, $block->getPosition(), [self::BLOCK => $block, self::TIME => $time]);
+    $position = $block->getPosition();
+    $entry = new BlockEntry($position, $block, $time);
+    $this->addBlockEntryToArrayWithVector3Key($this->placedBlocks, $entry);
   }
 
   public function handleBucketDump(PlayerBucketEmptyEvent $event): void
@@ -240,10 +268,11 @@ class BlocksManager
     // $block = $event->getItem()->getTypeId() == ItemTypeIds::WATER_BUCKET ? VanillaBlocks::WATER() : VanillaBlocks::LAVA();
     $block = $this->world->getBlock($position); // probably fine to just log what is already there
 
-    // Add the block to the placedBlocks array with the calculated position and time
-    $this->addItemToArrayWithVector3Key($this->placedBlocks, $position, [self::BLOCK => $block, self::TIME => $time]);
-  }
+    $entry = new BlockEntry($position, $block, $time);
 
+    // Add the block to the placedBlocks array with the calculated position and time
+    $this->addBlockEntryToArrayWithVector3Key($this->placedBlocks, $entry);
+  }
 
   private function isInPlacedBlocks(Vector3 $vector3): bool
   {
@@ -254,8 +283,7 @@ class BlocksManager
   public function clearPlacedBlocks(): void
   {
     foreach ($this->placedBlocks as $data) {
-      $block = $data[self::BLOCK];
-      $pos = $block->getPosition();
+      $pos = $data->position;
       // have to check if terrain is loaded, this might not be nice on performance
       if ($this->world->isInLoadedTerrain($pos)) {
         $this->world->setBlock($pos, VanillaBlocks::AIR());
@@ -268,11 +296,9 @@ class BlocksManager
   public function replaceBrokenMapBlocks(): void
   {
     foreach ($this->brokenMapBlocks as $data) {
-      $block = $data[self::BLOCK];
-      $pos = $block->getPosition();
       // have to check if terrain is loaded, this might not be nice on performance
-      if ($this->world->isInLoadedTerrain($pos)) {
-        $this->world->setBlock($pos, $block);
+      if ($this->world->isInLoadedTerrain($data->position)) {
+        $this->world->setBlock($data->position, $data->block);
       }
     }
     $this->brokenMapBlocks = [];
@@ -280,7 +306,8 @@ class BlocksManager
 
   public function cleanMap(): void
   {
-    if (SwimCore::$DEBUG) echo("Cleaning map\n"); // actually we don't need a pointer in this class to the parent scene, so we can't log which map is cleaned
+    // actually we don't need a pointer in this class to the parent scene, so we can't log which map is cleaned
+    if (SwimCore::$DEBUG) echo("Cleaning map\n");
     $this->clearPlacedBlocks();
     $this->replaceBrokenMapBlocks();
     $this->clearChunkLoaders();
@@ -339,17 +366,45 @@ class BlocksManager
   }
 
   // place an array of vector3 positions of a single block type
-  public function placeBlocks(array $positions, Block $block, bool $log = true): void
+  // works the same as if a player placed these blocks
+  public function placeBlocks(array $positions, Block $block): void
   {
     $time = $this->server->getTick();
     foreach ($positions as $pos) {
       // if ($this->world->isInLoadedTerrain($pos))
       if ($this->world->isInWorld($pos->x, $pos->y, $pos->z)) {
         $this->world->setBlock($pos, $block);
+        $entry = new BlockEntry($pos, $block, $time);
+        $this->addBlockEntryToArrayWithVector3Key($this->placedBlocks, $entry);
+      }
+    }
+  }
 
-        if ($log) {
-          $this->addItemToArrayWithVector3Key($this->placedBlocks, $pos, [self::BLOCK => $block, self::TIME => $time]);
+  // simulates breaking blocks and does the same handling a player would have
+  public function removeBlocks(array $positions): void
+  {
+    foreach ($positions as $pos) {
+      // if ($this->world->isInLoadedTerrain($pos))
+      if ($this->world->isInWorld($pos->x, $pos->y, $pos->z)) {
+        $block = $this->world->getBlock($pos);
+        $this->handleBlockBreakOnBlock($block); // we just call this for logging purposes (this might not even be correct though)
+        $this->world->setBlock($pos, VanillaBlocks::AIR());
+      }
+    }
+  }
+
+  // set blocks to air and by default removes any existing blocks at the positions from the placed blocks array
+  public function removeBlocksFast(array $positions, bool $removeFromPlacedBlocksArray = true): void
+  {
+    foreach ($positions as $pos) {
+      // if ($this->world->isInLoadedTerrain($pos))
+      if ($this->world->isInWorld($pos->x, $pos->y, $pos->z)) {
+        // Remove from the placed blocks array since it is now air
+        if ($removeFromPlacedBlocksArray && $this->isInPlacedBlocks($pos)) {
+          if (SwimCore::$DEBUG) echo("BlocksManager::removeBlocksFast() | Removing placed blocks from blocks array\n");
+          unset($this->placedBlocks[PositionHelper::getVectorHashKey($pos)]);
         }
+        $this->world->setBlock($pos, VanillaBlocks::AIR());
       }
     }
   }
@@ -363,12 +418,10 @@ class BlocksManager
 
     // set back the placed blocks to air
     foreach ($this->placedBlocks as $key => $data) {
-      if ($time >= $data[self::TIME]) {
-        /** @var Block $block */
-        $block = $data[self::BLOCK];
-        $pos = $block->getPosition();
+      if ($time >= $data->time) {
         // if ($this->world->isInLoadedTerrain($pos))
-        $this->world->setBlock($pos, VanillaBlocks::AIR());
+
+        $this->world->setBlock($data->position, VanillaBlocks::AIR());
 
         // if (SwimCore::$DEBUG) echo "Removing placed block: " . $block->getName() . "\n";
         unset($this->placedBlocks[$key]);
@@ -377,12 +430,10 @@ class BlocksManager
 
     // set back the broken map blocks to what they were
     foreach ($this->brokenMapBlocks as $key => $data) {
-      if ($time >= $data[self::TIME]) {
-        /** @var Block $block */
-        $block = $data[self::BLOCK];
-        $pos = $block->getPosition();
+      if ($time >= $data->time) {
         // if ($this->world->isInLoadedTerrain($pos))
-        $this->world->setBlock($pos, $block);
+
+        $this->world->setBlock($data->position, $data->block);
 
         // if (SwimCore::$DEBUG) echo "Replacing map block: " . $block->getName() . "\n";
         unset($this->brokenMapBlocks[$key]);
@@ -396,7 +447,7 @@ class BlocksManager
     $key = $this->removeChunkLoader($position);
     $ticker = new BlockTicker($this->world, $position, $tick);
     $ticker->enableChunkTicker($tick);
-    $this->chuncksToKeepAlive[$key] = $ticker;
+    $this->chunksToKeepAlive[$key] = $ticker;
   }
 
   // returns they key of the hash key of the position passed in
@@ -404,9 +455,9 @@ class BlocksManager
   public function removeChunkLoader(Vector3 $position): int
   {
     $key = PositionHelper::getVectorHashKey($position);
-    if (self::isHashKeyInArray($position, $this->chuncksToKeepAlive)) {
-      $this->chuncksToKeepAlive[$key]->free();
-      unset($this->chuncksToKeepAlive[$key]);
+    if (self::isHashKeyInArray($position, $this->chunksToKeepAlive)) {
+      $this->chunksToKeepAlive[$key]->free();
+      unset($this->chunksToKeepAlive[$key]);
     }
     return $key;
   }
@@ -414,10 +465,36 @@ class BlocksManager
   // frees all chunk loaders and empties the array
   public function clearChunkLoaders(): void
   {
-    foreach ($this->chuncksToKeepAlive as $loader) {
+    foreach ($this->chunksToKeepAlive as $loader) {
       $loader->free();
     }
-    $this->chuncksToKeepAlive = [];
+    $this->chunksToKeepAlive = [];
+  }
+
+  public function getPlacedBlocks(): array
+  {
+    return $this->placedBlocks;
+  }
+
+  public function &getPlacedBlocksRef(): array
+  {
+    return $this->placedBlocks;
+  }
+
+  /**
+   * @param BlockEntry[] $arr
+   * @return void
+   */
+  public static function debugBlockEntries(array $arr): void
+  {
+    foreach ($arr as $data) {
+      $pos = PositionHelper::toString($data->position);
+      echo("block entry# $data->key: ($pos) ({$data->block->getName()})\n");
+      $remadeKey = PositionHelper::getVectorHashKey($data->position);
+      if ($remadeKey != $data->key) {
+        echo("$data->key and $remadeKey do not match!\n");
+      }
+    }
   }
 
 }

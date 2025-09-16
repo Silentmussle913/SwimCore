@@ -271,6 +271,8 @@ class Party
     $leader = reset($this->players);
     if ($leader) {
       $this->leader = $leader;// first player in the array
+      $newName = $leader->getNicks()->getNick() . "'s Party";
+      $this->core->getSystemManager()->getPartySystem()->renameParty($this->partyName, $newName);
       $this->leader->sendMessage(TextFormat::GREEN . "You are now the party leader of " . TextFormat::YELLOW . $this->partyName);
       $this->determineMaxPartySize(); // need to redetermine size
       $this->setHubKits();

@@ -33,6 +33,39 @@ class PartiesSystem extends System
     $this->parties[$party->getPartyName()] = $party;
   }
 
+  public function renameParty(string $partyName, string $newPartyName): void
+  {
+    // Fast path: same key requested. Keep object name consistent, then bail.
+    if ($partyName === $newPartyName) {
+      if (array_key_exists($partyName, $this->parties)) {
+        $this->parties[$partyName]->setPartyName($newPartyName);
+      }
+      return;
+    }
+
+    // Old key must exist.
+    if (!array_key_exists($partyName, $this->parties)) {
+      echo("Party '$partyName' does not exist.\n");
+      return;
+    }
+
+    // New key must not already exist (avoid accidental overwrite).
+    if (array_key_exists($newPartyName, $this->parties)) {
+      echo("Party '$newPartyName' already exists.\n");
+      return;
+    }
+
+    // Move the entry. This does not copy the whole array; it's just moving a value.
+    $party = $this->parties[$partyName];
+
+    // Keep the object's internal name in sync with the map key.
+    $party->setPartyName($newPartyName);
+
+    // Create the new key, then remove the old one.
+    $this->parties[$newPartyName] = $party;
+    unset($this->parties[$partyName]);
+  }
+
   /**
    * @throws ScoreFactoryException
    * this should maybe be a method of Party
