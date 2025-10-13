@@ -40,6 +40,7 @@ use pocketmine\network\mcpe\protocol\BossEventPacket;
 use pocketmine\network\mcpe\protocol\types\BossBarColor;
 use pocketmine\player\Player;
 use pocketmine\world\World;
+use ReflectionException;
 
 abstract class Scene
 {
@@ -201,10 +202,22 @@ abstract class Scene
   {
   }
 
-  // called once on server shutdown
+  /**
+   * @throws ReflectionException
+   */
   public function exit(): void
   {
-    // no op default
+    // Clean up any actor entities in the world that this scene had ownership of.
+    // We would probably also want to do this with dropped items...
+    foreach ($this->entitySystem->entities as $actorEntity) {
+      $s = $actorEntity?->getParentScene();
+      if ($s === $this || $s === null) {
+        if (SwimCore::$DEBUG) {
+          echo("Scene::exit() | Cleaning up actor entity: {$actorEntity->getId()}\n");
+        }
+        $this->entitySystem->deregisterEntity($actorEntity);
+      }
+    }
   }
 
   // handling for when a player needs to restart in a scene individually (rekit, warp back to a spawn point, etc)
