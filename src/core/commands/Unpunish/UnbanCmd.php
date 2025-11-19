@@ -1,6 +1,6 @@
 <?php
 
-namespace core\commands\Unpunish;
+namespace core\commands\unpunish;
 
 use core\SwimCore;
 use core\systems\player\components\Rank;
