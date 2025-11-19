@@ -7,7 +7,7 @@ use core\communicator\Communicator;
 
 class PlayerListRequestPacket extends Packet
 {
-  public const NETWORK_ID = PacketId::PLAYER_LIST_REQUEST;
+  public const  NETWORK_ID = PacketId::PLAYER_LIST_REQUEST;
 
   public string $regionName = "";
 

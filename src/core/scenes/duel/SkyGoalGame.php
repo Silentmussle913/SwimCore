@@ -233,8 +233,8 @@ abstract class SkyGoalGame extends Duel
     if ($this->noCrits) {
       CustomDamage::customDamageHandle($event);
     }
-    // update who last hit them
-    $victim->getCombatLogger()->setlastHitBy($attacker);
+    // handle the attack for combat logging
+    $attacker->getCombatLogger()?->handleAttack($victim);
   }
 
   protected function playerKilled(SwimPlayer $attacker, SwimPlayer $victim, EntityDamageByEntityEvent $event): void
@@ -259,7 +259,10 @@ abstract class SkyGoalGame extends Duel
   {
     $victimTeam = $this->getPlayerTeam($victim);
     // validate team
-    if (!$victimTeam || $victimTeam->isSpecTeam()) return; // this is bad but shouldn't ever happen
+    if (!$victimTeam || $victimTeam->isSpecTeam()) {
+      return; // this is bad but shouldn't ever happen
+    }
+
     $this->deathHandle($victim, $victimTeam, $attacker);
   }
 

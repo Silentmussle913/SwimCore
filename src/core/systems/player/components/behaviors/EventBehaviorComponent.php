@@ -5,7 +5,7 @@ namespace core\systems\player\components\behaviors;
 use core\SwimCore;
 use core\systems\player\Component;
 use core\systems\player\SwimPlayer;
-use core\utils\BehaviorEventEnums;
+use core\utils\BehaviorEventEnum;
 use pocketmine\event\block\BlockBreakEvent;
 use pocketmine\event\block\BlockPlaceEvent;
 use pocketmine\event\entity\EntityDamageByChildEntityEvent;
@@ -210,30 +210,30 @@ abstract class EventBehaviorComponent extends Component
 
   }
 
-  public final function event(mixed $event, int $eventEnum): void
+  public final function event(mixed $event, BehaviorEventEnum $eventEnum): void
   {
     if (!$this->doesEvents) return;
     match ($eventEnum) {
-      BehaviorEventEnums::BLOCK_BREAK_EVENT => $this->blockBreakEvent($event),
-      BehaviorEventEnums::BLOCK_PLACE_EVENT => $this->blockPlaceEvent($event),
-      BehaviorEventEnums::ENTITY_DAMAGE_BY_CHILD_ENTITY_EVENT => $this->entityDamageByChildEntityEvent($event),
-      BehaviorEventEnums::ENTITY_DAMAGE_BY_ENTITY_EVENT => $this->entityDamageByEntityEvent($event),
-      BehaviorEventEnums::ENTITY_DAMAGE_EVENT => $this->entityDamageEvent($event),
-      BehaviorEventEnums::ENTITY_ITEM_PICKUP_EVENT => $this->playerPickupItem($event),
-      BehaviorEventEnums::ENTITY_REGAIN_HEALTH_EVENT => $this->entityRegainHealthEvent($event),
-      BehaviorEventEnums::ENTITY_SPAWN_EVENT => $this->playerSpawnChildEvent($event),
-      BehaviorEventEnums::ENTITY_TELEPORT_EVENT => $this->entityTeleportEvent($event),
-      BehaviorEventEnums::PROJECTILE_HIT_ENTITY_EVENT => $this->projectileHitEntityEvent($event),
-      BehaviorEventEnums::PROJECTILE_HIT_EVENT => $this->projectileHitEvent($event),
-      BehaviorEventEnums::PROJECTILE_LAUNCH_EVENT => $this->projectileLaunchEvent($event),
-      BehaviorEventEnums::INVENTORY_TRANSACTION_EVENT => $this->inventoryUseEvent($event),
-      BehaviorEventEnums::PLAYER_DROP_ITEM_EVENT => $this->itemDropEvent($event),
-      BehaviorEventEnums::PLAYER_INTERACT_EVENT => $this->playerInteractEvent($event),
-      BehaviorEventEnums::PLAYER_ITEM_CONSUME_EVENT => $this->playerConsumeEvent($event),
-      BehaviorEventEnums::PLAYER_ITEM_USE_EVENT => $this->itemUseEvent($event),
-      BehaviorEventEnums::PLAYER_TOGGLE_FLIGHT_EVENT => $this->playerToggleFlightEvent($event),
-      BehaviorEventEnums::DATA_PACKET_RECEIVE_EVENT => $this->dataPacketReceiveEvent($event),
-      BehaviorEventEnums::PLAYER_JUMP_EVENT => $this->playerJumpEvent($event),
+      BehaviorEventEnum::BLOCK_BREAK_EVENT => $this->blockBreakEvent($event),
+      BehaviorEventEnum::BLOCK_PLACE_EVENT => $this->blockPlaceEvent($event),
+      BehaviorEventEnum::ENTITY_DAMAGE_BY_CHILD_ENTITY_EVENT => $this->entityDamageByChildEntityEvent($event),
+      BehaviorEventEnum::ENTITY_DAMAGE_BY_ENTITY_EVENT => $this->entityDamageByEntityEvent($event),
+      BehaviorEventEnum::ENTITY_DAMAGE_EVENT => $this->entityDamageEvent($event),
+      BehaviorEventEnum::ENTITY_ITEM_PICKUP_EVENT => $this->playerPickupItem($event),
+      BehaviorEventEnum::ENTITY_REGAIN_HEALTH_EVENT => $this->entityRegainHealthEvent($event),
+      BehaviorEventEnum::ENTITY_SPAWN_EVENT => $this->playerSpawnChildEvent($event),
+      BehaviorEventEnum::ENTITY_TELEPORT_EVENT => $this->entityTeleportEvent($event),
+      BehaviorEventEnum::PROJECTILE_HIT_ENTITY_EVENT => $this->projectileHitEntityEvent($event),
+      BehaviorEventEnum::PROJECTILE_HIT_EVENT => $this->projectileHitEvent($event),
+      BehaviorEventEnum::PROJECTILE_LAUNCH_EVENT => $this->projectileLaunchEvent($event),
+      BehaviorEventEnum::INVENTORY_TRANSACTION_EVENT => $this->inventoryUseEvent($event),
+      BehaviorEventEnum::PLAYER_DROP_ITEM_EVENT => $this->itemDropEvent($event),
+      BehaviorEventEnum::PLAYER_INTERACT_EVENT => $this->playerInteractEvent($event),
+      BehaviorEventEnum::PLAYER_ITEM_CONSUME_EVENT => $this->playerConsumeEvent($event),
+      BehaviorEventEnum::PLAYER_ITEM_USE_EVENT => $this->itemUseEvent($event),
+      BehaviorEventEnum::PLAYER_TOGGLE_FLIGHT_EVENT => $this->playerToggleFlightEvent($event),
+      BehaviorEventEnum::DATA_PACKET_RECEIVE_EVENT => $this->dataPacketReceiveEvent($event),
+      BehaviorEventEnum::PLAYER_JUMP_EVENT => $this->playerJumpEvent($event),
       default => null, // do we need unknown event handling?
     };
   }

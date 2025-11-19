@@ -3,6 +3,7 @@
 namespace core\custom\prefabs\boombox;
 
 use core\scenes\duel\Duel;
+use core\scenes\PvP;
 use core\SwimCore;
 use core\systems\player\SwimPlayer;
 use pocketmine\block\Block;
@@ -69,35 +70,44 @@ class CustomExplosion extends Explosion
     }
 
     // must be in a duel scene to get the block manager
-    $scene = $owner->getSceneHelper()?->getScene();
-    if (!($scene instanceof Duel)) return false;
+    $scene = $owner->getSceneHelper()?->getScene() ?? null;
+    if ($scene === null) {
+      return false;
+    }
+
+    $breaksBlocks = true;
+    if ($scene instanceof PvP) {
+      $breaksBlocks = $scene->tntBreaksBlocks;
+    }
 
     $air = VanillaItems::AIR();
     $airBlock = VanillaBlocks::AIR();
 
-    $bm = $scene->getBlockManager();
-    foreach ($this->affectedBlocks as $block) {
-      $pos = $block->getPosition();
-      if ($block instanceof TNT) {
-        $block->ignite(mt_rand(10, 30)); // not sure what consequences this could cause
-      } else {
+    if ($breaksBlocks) {
+      $bm = $scene->getBlockManager();
+      foreach ($this->affectedBlocks as $block) {
+        $pos = $block->getPosition();
+        if ($block instanceof TNT) {
+          $block->ignite(mt_rand(10, 30)); // not sure what consequences this could cause
+        } else {
 
-        // block manager tells us if we can break this block
-        if ($bm->handleBlockBreakOnBlock($block)) {
+          // block manager tells us if we can break this block
+          if ($bm->handleBlockBreakOnBlock($block)) {
 
-          // it is a normal block to blow up
-          if (mt_rand(0, 100) < $yield) {
-            foreach ($block->getDrops($air) as $drop) {
-              $this->world->dropItem($pos->add(0.5, 0.5, 0.5), $drop);
+            // it is a normal block to blow up
+            if (mt_rand(0, 100) < $yield) {
+              foreach ($block->getDrops($air) as $drop) {
+                $this->world->dropItem($pos->add(0.5, 0.5, 0.5), $drop);
+              }
             }
-          }
-          // needed to create drops for inventories
-          if (($t = $this->world->getTileAt($pos->x, $pos->y, $pos->z)) !== null) {
-            $t->onBlockDestroyed();
-          }
+            // needed to create drops for inventories
+            if (($t = $this->world->getTileAt($pos->x, $pos->y, $pos->z)) !== null) {
+              $t->onBlockDestroyed();
+            }
 
-          // since we blew it up it is now air
-          $this->world->setBlockAt($pos->x, $pos->y, $pos->z, $airBlock);
+            // since we blew it up it is now air
+            $this->world->setBlockAt($pos->x, $pos->y, $pos->z, $airBlock);
+          }
         }
       }
     }
@@ -149,7 +159,7 @@ class CustomExplosion extends Explosion
         }
 
         $entity->attack($ev);
-        $entity->setMotion($entity->getMotion()->addVector($motion->multiply($impact * 1.5)));
+        $entity->setMotion($entity->getMotion()->addVector($motion->multiply($impact * 1.5))); // TODO: maybe change kb here
       }
     }
   }

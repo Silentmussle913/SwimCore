@@ -2,11 +2,11 @@
 
 namespace core\utils\raklib;
 
-use pmmp\thread\ThreadSafeArray;
 use pocketmine\network\mcpe\compression\ZlibCompressor;
 use pocketmine\network\mcpe\convert\TypeConverter;
 use pocketmine\network\mcpe\EntityEventBroadcaster;
 use pocketmine\network\mcpe\PacketBroadcaster;
+use pocketmine\network\mcpe\protocol\PacketDecodeException;
 use pocketmine\network\mcpe\protocol\PacketPool;
 use pocketmine\network\mcpe\protocol\ProtocolInfo;
 use pocketmine\network\mcpe\raklib\PthreadsChannelReader;
@@ -24,6 +24,12 @@ use ReflectionClass;
 use ReflectionProperty;
 use Throwable;
 
+use pmmp\encoding\Byte;
+use pmmp\encoding\ByteBufferReader;
+use pmmp\encoding\ByteBufferWriter;
+use pmmp\encoding\DataDecodeException;
+use pmmp\thread\ThreadSafeArray;
+
 class SwimRakLibInterface extends RakLibInterface
 {
 
@@ -33,8 +39,10 @@ class SwimRakLibInterface extends RakLibInterface
   private UserToRakLibThreadMessageSender $rawInterface;
   private ReflectionProperty $sessionsRefl;
   private ReflectionProperty $networkRefl;
+  private PthreadsChannelWriter $writer;
 
-  public function __construct(
+  public function __construct
+  (
     Server                         $server,
     string                         $ip,
     int                            $port,
@@ -77,26 +85,35 @@ class SwimRakLibInterface extends RakLibInterface
     /** @phpstan-var ThreadSafeArray<int, string> $threadToMainBuffer */
     $threadToMainBuffer = new ThreadSafeArray();
 
-    $refl->getProperty("rakLib")->setValue($this, new SwimRakLibServer(
-      $this->server->getLogger(),
-      $mainToThreadBuffer,
-      $threadToMainBuffer,
-      new InternetAddress($ip, $port, $ipV6 ? 6 : 4),
-      $this->rakServerId,
-      $this->server->getConfigGroup()->getPropertyInt(YmlServerProperties::NETWORK_MAX_MTU_SIZE, 1492),
-      11,
-      $sleeperEntry
-    ));
+    if (str_contains($ip, "/") && $port === 0) {
+      $refl->getProperty("rakLib")->setValue($this, new RakRouterRaklibServer(
+        $this->server->getLogger(),
+        $mainToThreadBuffer,
+        $threadToMainBuffer,
+        $this->rakServerId,
+        $sleeperEntry,
+        $ip,
+        "default",
+      ));
+    } else {
+      $refl->getProperty("rakLib")->setValue($this, new SwimRakLibServer(
+        $this->server->getLogger(),
+        $mainToThreadBuffer,
+        $threadToMainBuffer,
+        new InternetAddress($ip, $port, $ipV6 ? 6 : 4),
+        $this->rakServerId,
+        $this->server->getConfigGroup()->getPropertyInt(YmlServerProperties::NETWORK_MAX_MTU_SIZE, 1492),
+        11,
+        $sleeperEntry
+      ));
+    }
 
-    $this->eventReceiver = new RakLibToUserThreadMessageReceiver(
-      new PthreadsChannelReader($threadToMainBuffer)
-    );
+    $this->writer = new PthreadsChannelWriter($mainToThreadBuffer);
+    $this->eventReceiver = new RakLibToUserThreadMessageReceiver(new PthreadsChannelReader($threadToMainBuffer));
 
     $refl->getProperty("eventReceiver")->setValue($this, $this->eventReceiver);
 
-    $this->rawInterface = new UserToRakLibThreadMessageSender(
-      new PthreadsChannelWriter($mainToThreadBuffer)
-    );
+    $this->rawInterface = new UserToRakLibThreadMessageSender($this->writer);
 
     $refl->getProperty("interface")->setValue($this, $this->rawInterface);
   }
@@ -114,9 +131,60 @@ class SwimRakLibInterface extends RakLibInterface
         case "ddosEnd":
           (new DdosEvent(DdosEventType::DDOS_ENDED, $this))->call();
           return;
+        default:
+          if (strlen($packet) >= 2 && ord($packet[0]) === 255) {
+            try {
+              switch (ord($packet[1])) {
+                case LogKickPacket::ID:
+                  $s = new ByteBufferReader($packet);
+                  $s->setOffset(2);
+                  $pk = new LogKickPacket();
+                  $pk->decode($s);
+                  $pk->sendLog();
+                  break;
+                case NetherNetNoticePacket::ID:
+                  $s = new ByteBufferReader($packet);
+                  $s->setOffset(2);
+                  $pk = new NetherNetNoticePacket();
+                  $pk->decode($s);
+                  $sessions = $this->sessionsRefl->getValue($this);
+                  if (isset($sessions[$pk->getSessionId()])) {
+                    $session = $sessions[$pk->getSessionId()];
+                    $session->isNethernet = true;
+                  }
+                  break;
+                case NetherNetIdPacket::ID:
+                  $s = new ByteBufferReader($packet);
+                  $s->setOffset(2);
+                  $pk = new NetherNetIdPacket();
+                  $pk->decode($s);
+                  $pk->handle();
+              }
+            } catch (PacketDecodeException|DataDecodeException $e) {
+              echo("PACKET PROBLEM: {$e->getMessage()}\n");
+              $this->server->getLogger()->error($e->getMessage());
+            }
+          }
       }
+      return;
     }
     parent::onPacketReceive($sessionId, $packet);
+  }
+
+  public function queryData(QueryInfoPacket $queryInfoPacket): void
+  {
+    $s = new ByteBufferWriter();
+    Byte::writeUnsigned($s, QueryInfoPacket::ID);
+    $queryInfoPacket->encode($s);
+    $this->writer->write($s->getData());
+  }
+
+  public function kickMessageOverride(KickMessageOverridePacket $pk): void
+  {
+    $s = new ByteBufferWriter();
+    Byte::writeUnsigned($s, KickMessageOverridePacket::ID);
+    $pk->encode($s);
+    $this->writer->write($s->getData());
   }
 
   function setName(string $name): void
@@ -141,7 +209,7 @@ class SwimRakLibInterface extends RakLibInterface
     );
   }
 
-  public function onClientConnect(int $sessionId, string $address, int $port, int $clientID): void
+  public function onClientConnect(int $sessionId, string $address, int $port, int $mtu): void
   {
     $session = new SwimNetworkSession(
       $this->server,
@@ -155,6 +223,7 @@ class SwimRakLibInterface extends RakLibInterface
       $address,
       $port
     );
+    $session->setMTU($mtu);
     $sessions = $this->sessionsRefl->getValue($this);
     $sessions[$sessionId] = $session;
     $this->sessionsRefl->setValue($this, $sessions);

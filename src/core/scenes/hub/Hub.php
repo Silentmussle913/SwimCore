@@ -4,6 +4,7 @@ namespace core\scenes\hub;
 
 use core\custom\behaviors\player_event_behaviors\MaxDistance;
 use core\custom\prefabs\hub\HubEntities;
+use core\custom\prefabs\hub\ServerSelectorCompass;
 use core\forms\hub\FormDuelRequests;
 use core\forms\hub\FormDuels;
 use core\forms\hub\FormEvents;
@@ -14,7 +15,7 @@ use core\forms\parties\FormPartyCreate;
 use core\systems\player\components\Rank;
 use core\systems\player\SwimPlayer;
 use core\systems\scene\Scene;
-use core\utils\BehaviorEventEnums;
+use core\utils\BehaviorEventEnum;
 use core\utils\InventoryUtil;
 use core\utils\PositionHelper;
 use jojoe77777\FormAPI\SimpleForm;
@@ -24,6 +25,7 @@ use pocketmine\block\Block;
 use pocketmine\block\VanillaBlocks;
 use pocketmine\event\block\BlockPlaceEvent;
 use pocketmine\event\player\PlayerItemUseEvent;
+use pocketmine\item\ItemTypeIds;
 use pocketmine\item\VanillaItems;
 use pocketmine\network\mcpe\protocol\LevelEventPacket;
 use pocketmine\network\mcpe\protocol\types\LevelEvent;
@@ -46,14 +48,14 @@ class Hub extends Scene
   function init(): void
   {
     $this->registerCanceledEvents([
-      BehaviorEventEnums::ENTITY_DAMAGE_EVENT,
-      BehaviorEventEnums::ENTITY_DAMAGE_BY_ENTITY_EVENT,
-      BehaviorEventEnums::ENTITY_DAMAGE_BY_CHILD_ENTITY_EVENT,
-      BehaviorEventEnums::PLAYER_DROP_ITEM_EVENT,
-      BehaviorEventEnums::PROJECTILE_LAUNCH_EVENT,
-      BehaviorEventEnums::BLOCK_BREAK_EVENT,
-      BehaviorEventEnums::BLOCK_PLACE_EVENT,
-      BehaviorEventEnums::PLAYER_ITEM_CONSUME_EVENT
+      BehaviorEventEnum::ENTITY_DAMAGE_EVENT,
+      BehaviorEventEnum::ENTITY_DAMAGE_BY_ENTITY_EVENT,
+      BehaviorEventEnum::ENTITY_DAMAGE_BY_CHILD_ENTITY_EVENT,
+      BehaviorEventEnum::PLAYER_DROP_ITEM_EVENT,
+      BehaviorEventEnum::PROJECTILE_LAUNCH_EVENT,
+      BehaviorEventEnum::BLOCK_BREAK_EVENT,
+      BehaviorEventEnum::BLOCK_PLACE_EVENT,
+      BehaviorEventEnum::PLAYER_ITEM_CONSUME_EVENT
     ]);
 
     $this->setWorld($this->core->getHubWorld());
@@ -107,7 +109,7 @@ class Hub extends Scene
     $inventory->setHeldItemIndex(4);
     $inventory->clearAll();
     if ($this->core->getRegionInfo()->isHub()) {
-      // $inventory->setItem(0, new ServerSelectorCompass());
+      $inventory->setItem(0, new ServerSelectorCompass());
     } else {
       $inventory->setItem(0, VanillaItems::DIAMOND_SWORD()->setCustomName("§bFFA §7[Right Click]")->setUnbreakable());
       $inventory->setItem(1, VanillaItems::IRON_SWORD()->setCustomName("§fDuels §7[Right Click]")->setUnbreakable());
@@ -196,49 +198,47 @@ class Hub extends Scene
   }
 
   // using hub items to open forms
-  // TO DO : use custom derived item classes with their own embedded on use callbacks to avoid this string-switch malarkey
   public function sceneItemUseEvent(PlayerItemUseEvent $event, SwimPlayer $swimPlayer): void
   {
-    $item = $swimPlayer->getInventory()->getItemInHand();
-    $name = $item->getCustomName();
+    $item = $event->getItem();
 
     // party items instead
     $sh = $swimPlayer->getSceneHelper();
-    if ($sh->isInParty()) {
-      $sh->getParty()?->partyItemHandle($swimPlayer, $name);
+    if ($sh?->isInParty()) {
+      $sh->getParty()?->partyItemHandle($swimPlayer, $item);
       return;
     }
 
-    // regular
-    switch ($name) {
-      case "§bFFA §7[Right Click]":
+    $cakeID = VanillaBlocks::CAKE()->asItem()->getTypeId();
+
+    switch ($item->getTypeId()) {
+      case ItemTypeIds::DIAMOND_SWORD:
         FormFFA::ffaSelectionForm($swimPlayer);
         break;
-      case "§fDuels §7[Right Click]":
+      case ItemTypeIds::IRON_SWORD:
         FormDuels::duelBaseForm($swimPlayer);
         break;
-      case "§bManage Settings §7[Right Click]":
+      case ItemTypeIds::BOOK:
         FormSettings::settingsForm($swimPlayer);
         break;
-      case "§aParties §7[Right Click]":
+      case $cakeID:
         FormPartyCreate::partyBaseForm($this->core, $swimPlayer);
         break;
-      case "§bSpectate Matches §7[Right Click]":
+      case ItemTypeIds::PAPER:
         FormSpectate::spectateSelectionForm($this->core, $swimPlayer);
         break;
-      case "§aDuel Requests §7[Right Click]":
+      case ItemTypeIds::TOTEM:
         FormDuelRequests::duelSelectionBase($this->core, $swimPlayer);
         break;
-      case "§dEdit Kits §7[Right Click]":
+      case ItemTypeIds::EMERALD:
         $this->editKitConfirm($swimPlayer);
         break;
-      case "§bEvents §7[Right Click]":
+      case ItemTypeIds::NETHER_STAR:
         FormEvents::eventForm($this->core, $swimPlayer);
         break;
     }
   }
 
-  // TO DO: update the form api virion to work properly for modal form because null is returned on closing and that isn't handled properly
   public static function editKitConfirm(SwimPlayer $swimPlayer): void
   {
     $form = new SimpleForm(function (SwimPlayer $player, $data) {

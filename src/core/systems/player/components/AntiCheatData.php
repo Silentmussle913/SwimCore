@@ -7,21 +7,18 @@ use core\systems\player\Component;
 use core\systems\player\components\detections\Detection;
 use core\utils\AABB;
 use core\utils\AcData;
-use core\utils\cordhook\CordHook;
 use core\utils\security\LoginProcessor;
+use core\utils\WorldCollisionBoxHelper;
 use pocketmine\block\Block;
 use pocketmine\block\BlockTypeIds;
-use pocketmine\block\Liquid;
-use pocketmine\block\NetherVines;
 use pocketmine\entity\Location;
 use pocketmine\event\server\DataPacketReceiveEvent;
 use pocketmine\math\AxisAlignedBB;
 use pocketmine\math\Vector3;
 use pocketmine\network\mcpe\protocol\PlayerAuthInputPacket;
 use pocketmine\network\mcpe\protocol\types\PlayerAuthInputFlags;
-use pocketmine\player\GameMode;
-use pocketmine\utils\TextFormat as TF;
 use pocketmine\world\World;
+use ReflectionException;
 
 class AntiCheatData extends Component
 {
@@ -41,10 +38,12 @@ class AntiCheatData extends Component
 
   public ?Vector3 $currentMotion = null;
   public ?Vector3 $currentLocation = null;
-  public ?Vector3 $lastLocation = null;
+  public ?Location $lastLocation = null; // updated every auth input packet
   public ?Vector3 $lastClientPrediction = null;
   public ?Vector3 $currentMoveDelta = null;
   public ?Vector3 $lastMoveDelta = null;
+
+  public int $lastSkinChangeTime = 0;
 
   // you might really want to call
   public bool $hasBlockAbove = false;
@@ -89,8 +88,8 @@ class AntiCheatData extends Component
     $this->lastMoveDelta = Vector3::zero();
     $this->setDeviceOS();
 
-    // register detections like this:
-    // $this->killAura = $this->detections["KillAura"] = new KillAura($this->core, $this->swimPlayer, "KillAura");
+    // Example of how to register a detection:
+    // $this->hitBox = $this->detections["HitBox"] = new HitBox($this->core, $this->swimPlayer, "HitBox");
 
     // init each detection
     foreach ($this->detections as $detection) {
@@ -155,116 +154,16 @@ class AntiCheatData extends Component
     }
   }
 
-  public int $lastBlockPlaceTick = 0; // the server tick we last placed a block at
-  private int $blocksBroken = 0; // this field resets to 0 after each tick update
-  private int $blocksPlaced = 0; // this field resets to 0 after each tick update
-  private int $totalBlockActions = 0;
-  private float $totalBlockActionSpamFlags = 0;
-  private float $scaffoldFlags = 0;
-  private float $nukeFlags = 0;
-  private const maxBlockFlags = 20;
-  private const maxBlockActionsPerSecond = 20;
-
-  // hard coded detection SwimPlayer block break and place function directly calls, checks if we did the same block action more than once this tick
-
-  public function nukeCheck(): bool
-  {
-    if ($this->swimPlayer->getNslHandler()->getJitter() < 100) {
-      return $this->blockDebounceCheck($this->blocksBroken, $this->nukeFlags, "Nuker");
-    }
-    return false;
-  }
-
-  // not used for now because false flag
-  public function blockPlaceCheck(): bool
-  {
-    return $this->blockDebounceCheck($this->blocksPlaced, $this->scaffoldFlags, "Scaffold", 4); // it just false flags way too hard at 1 count max
-  }
-
-  // the only false flag concern to this is lag spikes
-  private function blockDebounceCheck(int &$count, float &$flags, string $name, int $countMax = 1): bool
-  {
-    $gm = $this->swimPlayer->getGamemode();
-    if ($gm == GameMode::CREATIVE || $gm == GameMode::SPECTATOR) return false;
-
-    $this->totalBlockActions++;
-    $count++;
-    $flagged = $count > $countMax; // check if did the action more than count max this tick. For example nuker breaks more than 1 block in a tick.
-    if ($flagged) {
-      $flags++;
-      $this->blockFlagAlert($name, $flags);
-    }
-
-    return $flagged;
-  }
-
-  private function blockFlagAlert(string $name, int|float $flags): void
-  {
-    if (((int)$flags) % 5 == 0) { // only alert every 5 flags
-      $msg = TF::RED . "[AC] " . TF::GREEN . $this->swimPlayer->getName() . TF::WHITE . ": " . $name . " Flags: " . $flags
-        . " (ping: " . TF::GREEN . $this->swimPlayer->getNslHandler()->getPing()
-        . TF::WHITE . "ms, jitter: " . TF::GREEN . $this->swimPlayer->getNslHandler()->getJitter();
-      Detection::StaffAlert($msg, $this->core);
-    }
-    if ($flags >= self::maxBlockFlags) {
-      Detection::BanPlayer($this->swimPlayer, $this->core);
-      Detection::PunishAlert($this->swimPlayer, $this->core, $name);
-    }
-  }
-
-  // check how many block actions happened in the past second, if exceeded the limit then flag
+  // can do stuff here if we wanted
   public function updateSecond(): void
   {
-    if ($this->core->getServer()->getTicksPerSecondAverage() < 18) return;
 
-    if ($this->totalBlockActions > self::maxBlockActionsPerSecond) {
-      $this->blockFlagAlert("Block Spam", ++$this->totalBlockActionSpamFlags);
-    }
-
-    $this->totalBlockActions = 0;
-
-    // also check player's hit box size (this class is becoming really messy and hacky)
-    $this->hitBoxSelfSizeCheck();
-  }
-
-  private function hitBoxSelfSizeCheck(): void
-  {
-    $flagged = false;
-
-    if ($this->swimPlayer->isSleeping() || $this->swimPlayer->isSwimming()) return;
-
-    $hitBox = $this->swimPlayer->getSize();
-    if ($this->swimPlayer->isSneaking()) {
-      if ($hitBox->getEyeHeight() != 1.215 || $hitBox->getHeight() != 1.35 || $hitBox->getWidth() != 0.6) { // check if crouching hit box is correct
-        $flagged = true;
-      }
-      //  } else if ($this->swimPlayer->isSwimming()) { // swimming is like broken or something
-      // var_dump($this->swimPlayer->getSize());
-    } else if ($hitBox->getEyeHeight() != 1.62 || $hitBox->getHeight() != 1.8 || $hitBox->getWidth() != 0.6) { // check if normal standing hit box is correct
-      $flagged = true;
-    }
-
-    if ($flagged) {
-      if ($this->core::$AC) {
-        $kicked = TF::RED . "[KICK] " . TF::GREEN . "ANTICHEAT" . TF::WHITE . " Kicked " . TF::GREEN . $this->swimPlayer->getName() . TF::WHITE . ". Reason: " . TF::GREEN . " spoofed geo";
-        $detail = " | spoofed geometry: " . $hitBox->getEyeHeight() . ", " . $hitBox->getHeight() . ", " . $hitBox->getWidth();
-        CordHook::sendEmbed("Kicked " . $this->swimPlayer->getName() . $detail, "Microsoft AntiCheat Kick");
-        Detection::StaffAlert($kicked, $this->core);
-        $this->swimPlayer->kick("Error Code: Block Buddy");
-      }
-    }
   }
 
   public function updateTick(): void
   {
-    if ($this->core->getServer()->getTicksPerSecondAverage() < 18) return; // not sure how bad this is to do here
-
     $this->updateRewindData();
     $this->updateDetections();
-
-    $this->decayTickCountableDetectionFlags(0.01, $this->nukeFlags, $this->blocksBroken);
-    $this->decayTickCountableDetectionFlags(0.001, $this->scaffoldFlags, $this->blocksPlaced);
-    $this->decayTickCountableDetectionFlags(0.01, $this->totalBlockActionSpamFlags);
 
     $this->collisionBlockTimeoutXZ++;
     $this->collisionBlockTimeoutY++;
@@ -387,7 +286,7 @@ class AntiCheatData extends Component
     $vertBlocks = $this->swimPlayer->getWorld()->getCollisionBlocks($vertAABB);
     foreach ($vertBlocks as $block) {
       if ($block->getTypeId() != BlockTypeIds::AIR) {
-        if (SwimCore::$DEBUG) echo($this->swimPlayer->getName() . " has a block above their head!\n");
+        if (SwimCore::$DEBUG) echo($this->swimPlayer->getName() . " has {$block->getName()} above their head!\n");
         $this->hasBlockAbove = true;
         break;
       }
@@ -464,6 +363,8 @@ class AntiCheatData extends Component
       return;
     }
 
+    // Literally none of the code below here ever runs which is fine since above head does all the work for us accidentally.
+
     // now false, we will do stretched plane collision detections from the player against surrounding blocks
     $this->isCollidedHorizontally = false;
 
@@ -509,6 +410,12 @@ class AntiCheatData extends Component
       if ($id == BlockTypeIds::WATER || $id == BlockTypeIds::LAVA) $inLiquid = true;
       if ($id == BlockTypeIds::COBWEB) $inWeb = true;
       if ($id == BlockTypeIds::VINES || $id == BlockTypeIds::LADDER) $climbing = true;
+
+      if (SwimCore::$DEBUG) {
+        if ($inWeb) echo("In web!\n");
+        if ($inLiquid) echo("In liquid!\n");
+        if ($climbing) echo("Climbing!\n");
+      }
     }
 
     // TODO: none of this below works properly because getCollisionBlocks() does not count the webs and liquid and vine/ladder blocks
@@ -585,17 +492,25 @@ class AntiCheatData extends Component
     return $collides;
   }
 
+  /**
+   * @throws ReflectionException
+   * returns false if not colliding with anything special (webs, water, etc.)
+   */
   public function checkSpecial(): bool
   {
     if ($this->shouldEarlyExitFromCollision($this->specialTimeout, false)) {
       return $this->isSpecialColliding;
     }
 
-    $bb = $this->swimPlayer->boundingBox->expandedCopy(0.2, 0.2, 0.2);
+    $bigBox = $this->swimPlayer->getBoundingBox()->expandedCopy(0.5, 0.5, 0.5);
+    $collisionBlocks = WorldCollisionBoxHelper::getCollisionBlocksIncludingSoft($bigBox, $this->swimPlayer->getworld());
 
-    foreach ($this->getBlocksInBB($this->swimPlayer->getWorld(), $bb) as $block) {
-      if ($block->getTypeId() === BlockTypeIds::LADDER || $block->getTypeId() === BlockTypeIds::VINES
-        || $block->getTypeId() === BlockTypeIds::CAVE_VINES || $block instanceof NetherVines || $block instanceof Liquid) {
+    /** @var Block $block */
+    foreach ($collisionBlocks as $block) {
+      if (WorldCollisionBoxHelper::isSoft($block->getTypeId())) {
+        if (SwimCore::$DEBUG) {
+          echo("We are specially colliding {$block->getName()}\n");
+        }
         $this->isSpecialColliding = true;
         $this->lastSpecial = $block; // maybe use this for quick checking before calling getBlocksInBB? not sure if possible to do
         return true;
@@ -638,9 +553,9 @@ class AntiCheatData extends Component
   }
 
   /**
-   * @return Vector3|null
+   * @return Location|null
    */
-  public function getLastLocation(): ?Vector3
+  public function getLastLocation(): ?Location
   {
     return $this->lastLocation;
   }
@@ -704,6 +619,35 @@ class AntiCheatData extends Component
   public function getDetections(): array
   {
     return $this->detections;
+  }
+
+  // Unused concept idea (this would just cause problems)
+  public function lagBack(bool $smooth = true, bool $useLastGroundPosition = true, ?Vector3 $pos = null): void
+  {
+    $target = null;
+
+    if ($useLastGroundPosition) {
+      $target = $this->lastOnGroundLocation;
+    } else if ($pos !== null) {
+      $target = $pos; // otherwise if we are not using the last on ground position we are going to use the specified target position (see [1])
+    }
+
+    // [1] if that wasn't supplied though, lagging back won't happen
+    if ($target === null) return;
+
+    // so no lag backs happen from world teleports (for example jumping the same tick you get teleported to a different world)
+    if ($target->world !== $this->swimPlayer->getWorld()) {
+      if (SwimCore::$DEBUG) echo $this->swimPlayer->getName() . " avoiding lag back across worlds \n";
+      return;
+    }
+
+    // im still afraid that the world check above isn't solid enough due to sync movement and how that might work over time
+    if ($smooth) {
+      $this->swimPlayer->setPosition($target);
+      $this->swimPlayer->getNetworkSession()->syncMovement($target);
+    } else {
+      $this->swimPlayer->teleport($target);
+    }
   }
 
 }

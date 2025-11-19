@@ -5,7 +5,6 @@ namespace core\forms\parties;
 use core\SwimCore;
 use core\systems\party\Party;
 use core\systems\player\SwimPlayer;
-use jojoe77777\FormAPI\CustomForm;
 use jojoe77777\FormAPI\SimpleForm;
 use pocketmine\utils\TextFormat;
 
@@ -50,7 +49,8 @@ class FormPartyCreate
       $party = $buttons[$partyName];
 
       if ($party instanceof Party) {
-        if (!$party->isInDuel() && $party->canAddPlayerToParty()) {
+        if (!$party->isInDuel() && $party->canAddPlayerToParty()
+          && !$core->getSystemManager()->getPartySystem()->isInParty($player) && $player->isInScene("Hub")) {
           $party->addPlayerToParty($player);
         } else {
           $player->sendMessage(TextFormat::YELLOW . "Could not join party at this time");
@@ -79,6 +79,11 @@ class FormPartyCreate
       if ($data === null) return;
 
       if ($data == 0) {
+
+        if ($core->getSystemManager()->getPartySystem()->isInParty($player) || !$player->isInScene("Hub")) {
+          return;
+        }
+
         $partySystem = $core->getSystemManager()->getPartySystem();
         $partyName = $player->getNicks()->getNick() . "'s Party";
         if ($partySystem->partyNameTaken($partyName)) {
@@ -116,7 +121,8 @@ class FormPartyCreate
       $openJoin = $partyData['open'];
 
       if ($party instanceof Party) {
-        if (!$party->isInDuel() && $party->canAddPlayerToParty()) {
+        if (!$party->isInDuel() && $party->canAddPlayerToParty()
+          && !$core->getSystemManager()->getPartySystem()->isInParty($player) && $player->isInScene("Hub")) {
           if ($openJoin) {
             $party->addPlayerToParty($player);
           } else {

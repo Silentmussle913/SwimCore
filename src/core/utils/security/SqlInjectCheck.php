@@ -2,7 +2,12 @@
 
 namespace core\utils\security;
 
-class SqlInjectCheck
+use function preg_match;
+use function str_contains;
+use function strlen;
+use function strtoupper;
+
+final class SqlInjectCheck
 {
 
   public static function isSqlInjectionAttempt(string $input): bool
@@ -45,9 +50,11 @@ class SqlInjectCheck
     if (strlen($input) > 127) {
       return false;
     }
+
     // Validate input as UUID or hex string
     $uuidRegex = '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/';
     $hexRegex = '/^[\da-fA-F]+$/';
+
     return preg_match($uuidRegex, $input) || preg_match($hexRegex, $input);
   }
 

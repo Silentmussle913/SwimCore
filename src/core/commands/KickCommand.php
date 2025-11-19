@@ -66,4 +66,9 @@ class KickCommand extends BaseCommand
     }
   }
 
+  public function getPermission(): ?string
+  {
+    return "use.staff";
+  }
+
 }

@@ -2,12 +2,14 @@
 
 namespace core\systems\entity\entities;
 
+use Closure;
 use core\SwimCore;
 use core\systems\entity\EntityBehaviorManager;
 use core\systems\player\SwimPlayer;
 use core\systems\scene\Scene;
 use core\SwimCoreInstance;
 use Exception;
+use InvalidArgumentException;
 use pocketmine\entity\Attribute;
 use pocketmine\entity\Entity;
 use pocketmine\entity\EntitySizeInfo;
@@ -45,6 +47,7 @@ use Ramsey\Uuid\Uuid;
 use Ramsey\Uuid\UuidInterface;
 use ReflectionClass;
 use ReflectionException;
+use ReflectionFunction;
 
 // a Hybrid implementation of the Human class intended for scene parenting and behavior scripting via overriding and extending
 class Actor extends Living
@@ -59,6 +62,10 @@ class Actor extends Living
   private bool $hasServerSidedSkin = false;
 
   protected bool $anchored = false;
+
+  /** @var Closure(int):bool|null */
+  private ?Closure $entityBaseTickClosure = null;
+  // This is a delegate called back during entityBaseTick(), intended for movement related behaviors
 
   /**
    * @throws ReflectionException
@@ -92,7 +99,7 @@ class Actor extends Living
     return $this->entityBehaviorManager;
   }
 
-  public function spawnToAllInScene()
+  public function spawnToAllInScene(): void
   {
     foreach ($this->parentScene->getPlayers() as $player) {
       $this->spawnTo($player);
@@ -125,6 +132,43 @@ class Actor extends Living
     if (!$this->anchored) {
       parent::addMotion($x, $y, $z);
     }
+  }
+
+  /** @param Closure(int):bool $cb
+   * @throws ReflectionException
+   */
+  public function setEntityBaseTickCallback(Closure $cb, bool $safety = false): void
+  {
+    if ($safety) {
+      $rf = new ReflectionFunction($cb);
+      $params = $rf->getParameters();
+
+      if (count($params) !== 1 || ($params[0]->hasType() && (string)$params[0]->getType() !== 'int')) {
+        throw new InvalidArgumentException('Callback must be function(int): bool');
+      }
+
+      if ($rf->hasReturnType() && (string)$rf->getReturnType() !== 'bool') {
+        throw new InvalidArgumentException('Callback must return bool');
+      }
+    }
+
+    if (SwimCore::$DEBUG) {
+      echo("Setting entity base tick callback\n");
+    }
+
+    $this->entityBaseTickClosure = $cb;
+  }
+
+  public function entityBaseTick(int $tickDiff = 1): bool
+  {
+    $hasUpdate = parent::entityBaseTick($tickDiff);
+    $hasUpdate2 = false;
+
+    if ($this->entityBaseTickClosure !== null) {
+      $hasUpdate2 = ($this->entityBaseTickClosure)($tickDiff);
+    }
+
+    return $hasUpdate || $hasUpdate2;
   }
 
   public function setMotion(Vector3 $motion): bool
@@ -280,6 +324,7 @@ class Actor extends Living
     float  $blendOutTime = 0
   ): void
   {
+    // if (SwimCore::$DEBUG) echo("Running animation: " . $animation . "\n");
     foreach ($this->getWorld()->getViewersForPosition($this->getPosition()) as $player) {
       if (isset($player)) {
         if ($player->isConnected()) {
@@ -301,7 +346,7 @@ class Actor extends Living
     parent::initEntity($nbt);
 
     $this->setNameTagAlwaysVisible(); // what would not always show name tag mean? culled behind walls?
-    $this->setScale(2);
+    $this->setScale(2); // is there a reason we do this?
 
     if ($this->hasServerSidedSkin) {
       $this->setSkinUUID();
@@ -465,11 +510,11 @@ class Actor extends Living
    */
   public function sendSkin(?array $targets = null): void
   {
-    /* let's hope this wasn't mission-critical code since ProtocolInfo doesn't have this const anymore (at least in NGPM)
-    if ($this instanceof Player && $this->getNetworkSession()->getProtocolId() === ProtocolInfo::PROTOCOL_1_19_60) {
+    ///* let's hope this wasn't mission-critical code since ProtocolInfo doesn't have this const anymore (at least in NGPM)
+    if ($this instanceof Player && SwimCore::$isNetherGames && $this->getNetworkSession()->getProtocolId() === ProtocolInfo::PROTOCOL_1_19_60) {
       $targets = array_diff($targets ?? $this->hasSpawned, [$this]);
     }
-    */
+    //*/
 
     TypeConverter::broadcastByTypeConverter($targets ?? $this->hasSpawned, function (TypeConverter $typeConverter): array {
       return [

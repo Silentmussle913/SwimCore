@@ -63,9 +63,7 @@ class Nicks extends Component
     $this->lastNickTick = $this->core->getServer()->getTick();
   }
 
-  // sets a randomly generated nick
-  public function setRandomNick(): void
-  {
+  public static function getRandomNick(): string {
     $longestName = 12;
     do {
       $nameType = rand(1, 3);
@@ -97,6 +95,13 @@ class Nicks extends Component
       $name = $pre . ucfirst($name);
     }
 
+    return $name;
+  }
+
+  // sets a randomly generated nick
+  public function setRandomNick(): void
+  {
+    $name = self::getRandomNick();
     $this->hasNick = true;
     $this->nick = $name;
     $this->swimPlayer->setDisplayName($this->nick);
@@ -106,13 +111,21 @@ class Nicks extends Component
     CordHook::sendEmbed($this->swimPlayer->getName() . " set nick to " . $this->nick, "Nick Alert");
   }
 
-  private function syncPlayerList(): void
-  {
-    $pk = PlayerListPacket::add([
+  public function syncPlayerList() : void {
+    if ($this->swimPlayer->isConnected()) {
+      $players = Server::getInstance()->getOnlinePlayers();
+      unset($players[$this->swimPlayer->getUniqueId()->getBytes()]);
+      $pk = PlayerListPacket::add([
+        PlayerListEntry::createAdditionEntry($this->swimPlayer->getRandomUUID(), $this->swimPlayer->getId(), $this->swimPlayer->getDisplayName(),
+          TypeConverter::getInstance()->getSkinAdapter()->toSkinData($this->swimPlayer->getSkin()), $this->swimPlayer->getXuid())
+      ]);
+      NetworkBroadcastUtils::broadcastPackets($players, [$pk]);
+    }
+    $selfPk = PlayerListPacket::add([
       PlayerListEntry::createAdditionEntry($this->swimPlayer->getUniqueId(), $this->swimPlayer->getId(), $this->swimPlayer->getDisplayName(),
         TypeConverter::getInstance()->getSkinAdapter()->toSkinData($this->swimPlayer->getSkin()), $this->swimPlayer->getXuid())
     ]);
-    NetworkBroadcastUtils::broadcastPackets(Server::getInstance()->getOnlinePlayers(), [$pk]);
+    $this->swimPlayer->getNetworkSession()->sendDataPacket($selfPk);
   }
 
 }

@@ -2,9 +2,12 @@
 
 namespace core;
 
+use CameraAPI\CameraHandler;
 use core\communicator\Communicator;
 use core\communicator\packet\types\DisconnectReason;
+use core\custom\blocks\CustomBlock;
 use core\database\SwimDB;
+use core\listeners\AntiCheatListener;
 use core\listeners\PlayerListener;
 use core\listeners\WorldListener;
 use core\systems\SystemManager;
@@ -15,22 +18,19 @@ use core\utils\config\ConfigMapper;
 use core\utils\config\RegionInfo;
 use core\utils\config\SwimConfig;
 use core\utils\loaders\CustomItemLoader;
-use core\utils\raklib\SwimRakLibInterface;
-use core\utils\security\IpParse;
+use core\utils\raklib\RaklibSetup;
+use core\utils\raklib\SwimSkinAdapter;
+use core\utils\raklib\SwimTypeConverter;
+use core\utils\security\IPParse;
 use core\utils\loaders\WorldLoader;
 use core\utils\VoidGenerator;
 use CortexPE\Commando\exception\HookAlreadyRegistered;
+use Exception;
+use FilesystemIterator;
 use JsonException;
 use muqsit\invmenu\InvMenuHandler;
-use pocketmine\event\EventPriority;
-use pocketmine\event\server\NetworkInterfaceRegisterEvent;
-use pocketmine\network\mcpe\convert\TypeConverter;
 use pocketmine\network\mcpe\NetworkSession;
 use pocketmine\network\mcpe\protocol\ProtocolInfo;
-use pocketmine\network\mcpe\raklib\RakLibInterface;
-use pocketmine\network\mcpe\StandardEntityEventBroadcaster;
-use pocketmine\network\mcpe\StandardPacketBroadcaster;
-use pocketmine\network\query\DedicatedQueryNetworkInterface;
 use pocketmine\plugin\PluginBase;
 use pocketmine\scheduler\Task;
 use pocketmine\Server;
@@ -40,15 +40,18 @@ use pocketmine\utils\SignalHandler;
 use pocketmine\utils\TextFormat;
 use pocketmine\world\generator\GeneratorManager;
 use pocketmine\world\World;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
+use ReflectionClass;
 use ReflectionException;
 use Symfony\Component\Filesystem\Path;
-use pocketmine\ServerProperties;
 
 class SwimCore extends PluginBase
 {
 
   public static bool $AC = true;
   public static bool $DEBUG = false;
+  public static bool $REPLAYER = false;
   public static bool $RANKED = true;
 
   public static string $assetFolder; // holds our assets for our custom loaded entities geometry and skin
@@ -57,14 +60,16 @@ class SwimCore extends PluginBase
   public static string $customDataFolder;
   public static bool $isNetherGames = false;
   public bool $shuttingDown = false;
-  public static bool $blobCacheOn = true;
+  public static bool $blobCacheOn = false;
   public bool $deltaOn = false;
+  private string $nethernetId = "";
 
   private SystemManager $systemManager;
   private CommandLoader $commandLoader;
   private SwimConfig $swimConfig;
   private RegionInfo $regionInfo;
 
+  private AntiCheatListener $antiCheatListener;
   private WorldListener $worldListener;
   private PlayerListener $playerListener;
 
@@ -97,6 +102,9 @@ class SwimCore extends PluginBase
     $regionMapper->load();
     $regionMapper->save();
 
+    // set up our rak lib interface
+    $this->setUpRakLib();
+
     // load the worlds
     WorldLoader::loadWorlds(self::$rootFolder);
 
@@ -120,12 +128,25 @@ class SwimCore extends PluginBase
     // schedule server's tasks
     $this->registerTasks();
 
-    // set up our rak lib interface
-    $this->setUpRakLib();
-
     // register inv menu (thanks muqsit)
     if (!InvMenuHandler::isRegistered()) {
       InvMenuHandler::register($this);
+    }
+
+    // Register our camera handler (thanks kaxyum)
+    if (!CameraHandler::isRegistered()) {
+      CameraHandler::register($this);
+    }
+
+    // Set up our skin adapter
+    if (self::$isNetherGames) {
+      foreach (ProtocolInfo::ACCEPTED_PROTOCOL as $protocol) {
+        $typeConverter = SwimTypeConverter::make($protocol);
+        $typeConverter->setSkinAdapter(new SwimSkinAdapter());
+      }
+    } else {
+      SwimTypeConverter::make(ProtocolInfo::CURRENT_PROTOCOL);
+      SwimTypeConverter::getInstance()->setSkinAdapter(new SwimSkinAdapter());
     }
 
     // set up signal handler
@@ -136,6 +157,48 @@ class SwimCore extends PluginBase
     // Disable the garbage collector, this is a HUGE performance boost that literally made Divinity playable and relatively a smooth server.
     // We are really going to have to make sure we collect our resources properly.
     gc_disable();
+
+    // $this->registerCustomBlocks();
+  }
+
+  // We gave up on this, we need a forked version of Customies for our pm fork to actually be able to do anything
+  private function registerCustomBlocks(): void
+  {
+    // Iterate all classes in core/custom/blocks directory that are not abstract and derive from CustomBlock
+    $directory = Path::canonicalize(Path::join(__DIR__, 'custom', 'blocks'));
+    if (!is_dir($directory)) {
+      echo "Error: $directory not found\n";
+      return;
+    }
+
+    $startPath = 'core\\custom\\blocks\\';
+
+    echo("Loading custom blocks from $directory\n");
+
+    try {
+      $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS));
+      foreach ($iterator as $file) {
+        if ($file->isFile() && $file->getExtension() === 'php') {
+          $relativePath = Path::makeRelative($file->getPathname(), $directory);
+          $relativePath = str_replace('/', '\\', $relativePath); // Ensure correct namespace separators
+          $relativePath = str_replace('.php', '', $relativePath); // Remove the .php extension
+          // Construct the full class name with the appropriate namespace
+          $fullClassName = $startPath . $relativePath;
+          if (class_exists($fullClassName)) {
+            $reflectionClass = new ReflectionClass($fullClassName);
+            // must derive from CustomBlock and not be abstract (fully implemented custom block)
+            if (($reflectionClass->isSubclassOf(CustomBlock::class)) && !$reflectionClass->isAbstract()) {
+              echo "Registering Custom Block: $fullClassName\n";
+              CustomBlock::registerCustomBlock($fullClassName);
+            }
+          } else {
+            echo "Error: Custom block class failed to register: $fullClassName\n";
+          }
+        }
+      }
+    } catch (Exception $e) {
+      echo "Error while loading custom blocks: {$e->getMessage()}\n";
+    }
   }
 
   private function registerTasks(): void
@@ -146,7 +209,8 @@ class SwimCore extends PluginBase
 
   public function getHubWorld(): ?World
   {
-    return $this->getServer()->getWorldManager()->getWorldByName($this->getRegionInfo()->isHub() ? "lobby" : "hub");
+    // return $this->getServer()->getWorldManager()->getWorldByName($this->getRegionInfo()->isHub() ? "lobby" : "hub");
+    return $this->getServer()->getWorldManager()->getWorldByName("hub");
   }
 
   private function setUpSignalHandler(): void
@@ -185,20 +249,33 @@ class SwimCore extends PluginBase
    */
   private function setUpRakLib(): void
   {
-    $typeConverter = TypeConverter::getInstance();
-    $packetBroadcaster = new StandardPacketBroadcaster($this->getServer(), method_exists(TypeConverter::class, "getProtocolId") ? $typeConverter->getProtocolId() : ProtocolInfo::CURRENT_PROTOCOL);
-    $entityEventBroadcaster = new StandardEntityEventBroadcaster($packetBroadcaster, $typeConverter);
-    $this->getServer()->getNetwork()->registerInterface(new SwimRakLibInterface($this->getServer(), $this->getServer()->getIp(), $this->getServer()->getPort(), false, $packetBroadcaster, $entityEventBroadcaster, $typeConverter, $this->swimConfig->motds));
-    if ($this->getServer()->getConfigGroup()->getConfigBool(ServerProperties::ENABLE_IPV6, true)) {
-      $this->getServer()->getNetwork()->registerInterface(new SwimRakLibInterface($this->getServer(), $this->getServer()->getIpV6(), $this->getServer()->getPortV6(), true, $packetBroadcaster, $entityEventBroadcaster, $typeConverter, $this->swimConfig->motds));
-    }
+    $listenAddresses = [
+      Server::getInstance()->getIp() . ":" . Server::getInstance()->getPort(),
+      "[" . Server::getInstance()->getIpV6() . "]:" . Server::getInstance()->getPortV6()
+    ];
+    $rakRouterSocketPath = "";
+    new RaklibSetup($this, $listenAddresses, $rakRouterSocketPath);
+  }
 
-    $this->getServer()->getPluginManager()->registerEvent(NetworkInterfaceRegisterEvent::class, function (NetworkInterfaceRegisterEvent $event) {
-      $interface = $event->getInterface();
-      if (($interface instanceof RakLibInterface || $interface instanceof DedicatedQueryNetworkInterface) && !$event instanceof SwimRakLibInterface) {
-        $event->cancel();
-      }
-    }, EventPriority::NORMAL, $this);
+  public function setNethernetId(string $nethernetId): void
+  {
+    /* Divinity does this for rotating messages in chat to advertise the nether net ip
+    if ($this->nethernetId === "") {
+      InfoBeta::addNethernetMessage();
+    }
+    */
+    $this->nethernetId = $nethernetId;
+    $this->getLogger()->info("NetherNet ID: $nethernetId");
+  }
+
+  public function getNethernetId(): string
+  {
+    return $this->nethernetId;
+  }
+
+  public function isNethernetEnabled(): bool
+  {
+    return $this->nethernetId != "";
   }
 
   public function onLoad(): void
@@ -206,7 +283,8 @@ class SwimCore extends PluginBase
     // set up asset and data folder
     $this->setDataAssetFolderPaths();
 
-    // register the void generator SwimCore has built in
+    // register the void generator SwimCore has built in, and also make the flat world just generate as void too (hack)
+    GeneratorManager::getInstance()->addGenerator(VoidGenerator::class, "flat", fn() => null, true);
     GeneratorManager::getInstance()->addGenerator(VoidGenerator::class, "void", fn() => null, true);
   }
 
@@ -218,7 +296,7 @@ class SwimCore extends PluginBase
       $this->shuttingDown = true;
       foreach ($this->getServer()->getOnlinePlayers() as $p) {
         $serverAddr = $p->getPlayerInfo()->getExtraData()["ServerAddress"] ?? "0.0.0.0:1";
-        $parsedIp = IpParse::sepIpFromPort($serverAddr);
+        $parsedIp = IPParse::sepIpFromPort($serverAddr);
         $p->getNetworkSession()->transfer($parsedIp[0], $parsedIp[1]);
       }
     }
@@ -241,8 +319,10 @@ class SwimCore extends PluginBase
   {
     $this->playerListener = new PlayerListener($this);
     $this->worldListener = new WorldListener($this);
+    $this->antiCheatListener = new AntiCheatListener($this);
     Server::getInstance()->getPluginManager()->registerEvents($this->playerListener, $this);
     Server::getInstance()->getPluginManager()->registerEvents($this->worldListener, $this);
+    Server::getInstance()->getPluginManager()->registerEvents($this->antiCheatListener, $this);
   }
 
   private function setDataAssetFolderPaths(): void
@@ -293,6 +373,11 @@ class SwimCore extends PluginBase
   public function getRegionInfo(): RegionInfo
   {
     return $this->regionInfo;
+  }
+
+  public function getAntiCheatListener(): AntiCheatListener
+  {
+    return $this->antiCheatListener;
   }
 
   public function getPlayerListener(): PlayerListener

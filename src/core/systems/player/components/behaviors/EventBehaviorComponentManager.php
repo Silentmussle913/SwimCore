@@ -4,6 +4,7 @@ namespace core\systems\player\components\behaviors;
 
 use core\SwimCore;
 use core\systems\player\SwimPlayer;
+use core\utils\BehaviorEventEnum;
 use core\utils\StackTracer;
 use pocketmine\event\entity\EntityDamageByEntityEvent;
 use pocketmine\event\Event;
@@ -114,7 +115,7 @@ class EventBehaviorComponentManager
     }
   }
 
-  public function event(Event $event, int $eventEnum): void
+  public function event(Event $event, BehaviorEventEnum $eventEnum): void
   {
     if (!empty($this->components)) {
       foreach ($this->components as $component) {

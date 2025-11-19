@@ -4,11 +4,11 @@ namespace core\scenes\duel;
 
 use core\systems\player\SwimPlayer;
 use core\systems\scene\misc\Team;
-use core\utils\BehaviorEventEnums;
+use core\utils\BehaviorEventEnum;
 use core\utils\InventoryUtil;
 use pocketmine\event\entity\EntityDamageByEntityEvent;
 use pocketmine\event\player\PlayerItemUseEvent;
-use pocketmine\item\EnderPearl as PearlItem;
+use pocketmine\item\ItemTypeIds;
 use pocketmine\item\PotionType;
 use pocketmine\item\VanillaItems;
 use pocketmine\player\GameMode;
@@ -27,9 +27,9 @@ class Nodebuff extends Duel
   public function init(): void
   {
     $this->registerCanceledEvents([
-      BehaviorEventEnums::PLAYER_DROP_ITEM_EVENT,
-      BehaviorEventEnums::BLOCK_BREAK_EVENT,
-      BehaviorEventEnums::BLOCK_PLACE_EVENT
+      BehaviorEventEnum::PLAYER_DROP_ITEM_EVENT,
+      BehaviorEventEnum::BLOCK_BREAK_EVENT,
+      BehaviorEventEnum::BLOCK_PLACE_EVENT
     ]);
   }
 
@@ -39,7 +39,7 @@ class Nodebuff extends Duel
     if ($this->spectatorControls($event, $swimPlayer)) return;
 
     $item = $event->getItem();
-    if ($item instanceof PearlItem) {
+    if ($item->getTypeId() == ItemTypeIds::ENDER_PEARL) {
       $swimPlayer->getCoolDowns()->triggerItemCoolDownEvent($event, $item);
     }
   }
@@ -67,9 +67,10 @@ class Nodebuff extends Duel
       $this->partyWin($winners->getTeamName());
     } else {
       // 1v1 duel scenario: assume there's only one loser
-      $loser = $this->losers[array_key_first($this->losers)];
+      // 3/29 rare crash fix attempt
+      $loser = !empty($this->losers) ? $this->losers[array_key_first($this->losers)] : null;
       $players = $winners->getPlayers();
-      $winner = $players[array_key_first($players)];
+      $winner = !empty($players) ? $players[array_key_first($players)] : null;
 
       // Ensure both winner and loser are valid
       if ($loser && $winner) {
@@ -80,11 +81,11 @@ class Nodebuff extends Duel
         );
 
         // Format strings for displaying potion counts
-        $attackerPotString = TextFormat::GRAY . " [" . TextFormat::GREEN . $attackerPotCount . TextFormat::GRAY . "]";
-        $victimPotString = TextFormat::GRAY . " [" . TextFormat::GREEN . $this->victimPotCount . TextFormat::GRAY . "]";
+        $attackerPotString = TextFormat::GRAY . " (" . TextFormat::GREEN . $attackerPotCount . TextFormat::GRAY . ")";
+        $victimPotString = TextFormat::GRAY . " (" . TextFormat::GREEN . $this->victimPotCount . TextFormat::GRAY . ")";
 
         // Prepare the nodebuff string for the message
-        $nodebuff = TextFormat::BOLD . TextFormat::GRAY . "[" . TextFormat::AQUA . "Nodebuff" . TextFormat::GRAY . "]" . TextFormat::RESET . " ";
+        $nodebuff = TextFormat::GRAY . "(" . TextFormat::AQUA . "Nodebuff" . TextFormat::GRAY . ")" . TextFormat::RESET . " ";
 
         // Determine message based on potion counts and send broadcast message
         if ($attackerPotCount > $this->victimPotCount) {
@@ -106,7 +107,7 @@ class Nodebuff extends Duel
 
   private function partyWin(string $winnerTeamName): void
   {
-    $nodebuff = TextFormat::BOLD . TextFormat::GRAY . "[" . TextFormat::AQUA . "Nodebuff" . TextFormat::GRAY . "]" . TextFormat::RESET . " ";
+    $nodebuff = TextFormat::GRAY . "(" . TextFormat::AQUA . "Nodebuff" . TextFormat::GRAY . ")" . TextFormat::RESET . " ";
 
     $loserTeamsArray = [];
     foreach ($this->teamManager->getTeams() as $team) {

@@ -153,4 +153,9 @@ class PunishCmd extends BaseCommand
     }
   }
 
+  public function getPermission(): ?string
+  {
+    return "use.staff";
+  }
+
 }

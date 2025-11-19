@@ -56,6 +56,7 @@ abstract class Component
   {
   }
 
+  // destructors might be a little misleading, they can be called but still have something exist in memory somewhere
   public function __destruct()
   {
     if (SwimCore::$DEBUG) {

@@ -102,7 +102,7 @@ class Team
     }
 
     $this->players[$swimPlayer->getId()] = $swimPlayer;
-    $swimPlayer->getSceneHelper()->setTeamNumber($this->teamID);
+    $swimPlayer->getSceneHelper()?->setTeamNumber($this->teamID);
 
     // bolted on way to give spectator kits
     if ($this->isSpecTeam()) {

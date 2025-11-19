@@ -26,7 +26,7 @@ class ClickHandler extends Component
     return $this->lastSwingTime;
   }
 
-  public function setLastSwingTime(float $time)
+  public function setLastSwingTime(float $time): void
   {
     $this->lastSwingTime = $time;
   }

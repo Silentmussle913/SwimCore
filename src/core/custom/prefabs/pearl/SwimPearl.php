@@ -2,12 +2,12 @@
 
 namespace core\custom\prefabs\pearl;
 
+use core\systems\player\SwimPlayer;
 use pocketmine\entity\Entity;
 use pocketmine\entity\Location;
 use pocketmine\entity\projectile\EnderPearl;
 use pocketmine\event\entity\ProjectileHitEvent;
 use pocketmine\nbt\tag\CompoundTag;
-use pocketmine\player\Player;
 use pocketmine\world\particle\EndermanTeleportParticle;
 use pocketmine\world\sound\EndermanTeleportSound;
 
@@ -25,7 +25,7 @@ class SwimPearl extends EnderPearl
   public function onHit(ProjectileHitEvent $event): void
   {
     $owner = $this->getOwningEntity();
-    if ($owner instanceof Player) {
+    if ($owner instanceof SwimPlayer) {
       // teleport particles and sound effects at original position
       $origin = $owner->getPosition();
       $this->getWorld()->addParticle($origin, new EndermanTeleportParticle());
@@ -38,6 +38,9 @@ class SwimPearl extends EnderPearl
       if ($this->animated) {
         $owner->setPosition($target);
         $owner->getNetworkSession()->syncMovement($target);
+        $owner->ticksSinceLastTeleport = 0;
+        $data = $owner->getAntiCheatData();
+        $data?->teleported();
       } else {
         $owner->teleport($target); // vanilla TP
       }

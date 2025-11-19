@@ -6,12 +6,12 @@ use core\SwimCore;
 use core\systems\player\SwimPlayer;
 use core\systems\System;
 use jackmd\scorefactory\ScoreFactoryException;
-use pocketmine\player\Player;
 use pocketmine\utils\TextFormat;
 
 class PartiesSystem extends System
 {
 
+  /* @var Party[] $parties */
   private array $parties;
 
   public function __construct(SwimCore $core)
@@ -88,7 +88,7 @@ class PartiesSystem extends System
     return count($this->parties);
   }
 
-  public function getPartyPlayerIsIn(Player $player): ?Party
+  public function getPartyPlayerIsIn(SwimPlayer $player): ?Party
   {
     foreach ($this->parties as $party) {
       if ($party->hasPlayer($player)) {
@@ -136,22 +136,22 @@ class PartiesSystem extends System
 
   public function init(): void
   {
-    // TODO: Implement init() method.
+
   }
 
   public function updateTick(): void
   {
-    // TODO: Implement updateTick() method.
+
   }
 
   public function updateSecond(): void
   {
-    // TODO: Implement updateSecond() method.
+
   }
 
   public function exit(): void
   {
-    // TODO: Implement exit() method.
+
   }
 
 }

@@ -13,6 +13,7 @@ use jackmd\scorefactory\ScoreFactoryException;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use ReflectionClass;
+use ReflectionException;
 use Symfony\Component\Filesystem\Path;
 
 class SceneSystem extends System
@@ -32,7 +33,7 @@ class SceneSystem extends System
     $this->entitySystem = $this->core->getSystemManager()->getEntitySystem();
 
     // all non-abstract scenes that are marked as autoload will be automatically loaded
-    $this->loadPersistentScenes();
+    $this->loadPersistentScenes(); // this will be FFAs usually
 
     // init each scene
     foreach ($this->scenes as $scene) {
@@ -85,6 +86,7 @@ class SceneSystem extends System
 
   /**
    * @breif calls the scene's exit function and then removes from the array, also calls scene exiting from the entity system
+   * @throws ReflectionException
    */
   public function removeScene(string $sceneName): void
   {
@@ -129,13 +131,16 @@ class SceneSystem extends System
 
     // same scene check which instead does a restart
     if ($newScene === $currentScene) {
+      // echo("Restarting player\n");
       $currentScene->restart($player);
       return;
     }
 
     // remove from current scene if it exists
-    $currentScene->removePlayer($player);
-    $this->entitySystem->playerLeavingScene($player, $currentScene);
+    if ($currentScene) {
+      $currentScene->removePlayer($player);
+      $this->entitySystem->playerLeavingScene($player, $currentScene);
+    }
     $player->cleanPlayerState(); // then clean the player's state
 
     // then add to new scene

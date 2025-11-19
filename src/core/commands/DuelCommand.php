@@ -5,8 +5,8 @@ namespace core\commands;
 use core\scenes\duel\Duel;
 use core\SwimCore;
 use core\systems\player\SwimPlayer;
+use core\utils\ArrayEnumArgument;
 use core\utils\TargetArgument;
-use CortexPE\Commando\args\TextArgument;
 use CortexPE\Commando\BaseCommand;
 use CortexPE\Commando\exception\ArgumentOrderException;
 use pocketmine\command\CommandSender;
@@ -14,6 +14,8 @@ use pocketmine\utils\TextFormat as TF;
 
 class DuelCommand extends BaseCommand
 {
+
+  public static bool $disableOnHub = true;
 
   private SwimCore $core;
 
@@ -31,7 +33,13 @@ class DuelCommand extends BaseCommand
   protected function prepare(): void
   {
     $this->registerArgument(0, new TargetArgument("player", false));
-    $this->registerArgument(1, new TextArgument("mode", false)); // maybe make this have autofill args from an array
+
+    $args = array_keys(Duel::$MODES);
+
+    // remove unwanted modes by value
+    $args = array_values(array_diff($args, ["scrim", "scrims", "block in practice", "blockin practice"]));
+
+    $this->registerArgument(1, new ArrayEnumArgument("mode", $args));
   }
 
   /**
@@ -41,7 +49,7 @@ class DuelCommand extends BaseCommand
   {
     if (!$sender instanceof SwimPlayer) return;
 
-    if ($sender->getSceneHelper()->getScene()->getSceneName() !== "Hub") {
+    if (!$sender->isInScene("Hub") && $sender->getSceneHelper()?->isInParty()) {
       $sender->sendMessage(TF::RED . "You must be in the Hub out of a party and not queued to use this!");
       return;
     }
@@ -51,27 +59,39 @@ class DuelCommand extends BaseCommand
       return;
     }
 
-    if ($args["player"] === $sender->getName()) {
+    if ($args["player"] === $sender->getName() || $args["player"] === $sender->getNicks()->getNick()) {
       $sender->sendMessage(TF::RED . "You can not duel your self!");
       return;
     }
 
-    if (!in_array($args["mode"], Duel::$MODES)) {
-      $sender->sendMessage(TF::RED . "Invalid Mode passed, Available Games: " . implode(", ", DUEL::$MODES));
+    $keys = array_keys(Duel::$MODES);
+
+    if (!in_array($args["mode"], $keys)) {
+      $sender->sendMessage(TF::RED . "Invalid Mode passed, Available Games: " . implode(", ", $keys));
       return;
     }
 
-    $targetPlayer = $this->core->getServer()->getPlayerExact($args["player"]);
+    $targetPlayer = SeeNick::getPlayerFromNick($args["player"]);
     if (!($targetPlayer instanceof SwimPlayer)) {
       $sender->sendMessage(TF::RED . "Could not find player " . $args["player"]);
       return;
     }
 
-    if ($targetPlayer->getSceneHelper()->getScene()->getSceneName() === "Hub") {
-      $targetPlayer->getInvites()->duelInvitePlayer($sender, $args["mode"]);
+    if ($targetPlayer === $sender) {
+      $sender->sendMessage(TF::RED . "You can not duel your self!");
+      return;
+    }
+
+    if ($targetPlayer->isInScene("Hub")) {
+      $targetPlayer->getInvites()?->duelInvitePlayer($sender, $args["mode"]);
     } else {
       $sender->sendMessage(TF::RED . "Player must be in the Hub out of a party and not queued to use this!");
     }
+  }
+
+  public function getPermission(): ?string
+  {
+    return "use.all";
   }
 
 }

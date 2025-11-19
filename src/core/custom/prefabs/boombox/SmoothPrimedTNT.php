@@ -2,6 +2,7 @@
 
 namespace core\custom\prefabs\boombox;
 
+use core\scenes\PvP;
 use core\systems\entity\entities\DeltaSupportTrait;
 use core\systems\player\SwimPlayer;
 use pocketmine\entity\Attribute;
@@ -75,10 +76,17 @@ class SmoothPrimedTNT extends PrimedTNT
 
   public function explode(): void
   {
-    $ev = new EntityPreExplodeEvent($this, 3.5);
-    $ev->call();
-    if (!$ev->isCancelled()) {
+    $radius = 3.5;
+    $scene = $this->owner->getSceneHelper()?->getScene() ?? null;
+    if ($scene instanceof PvP) {
+      $radius = $scene->tntRadius;
+    }
 
+    $ev = new EntityPreExplodeEvent($this, $radius);
+    $ev->setBlockBreaking($this->breaksBlocks);
+    $ev->call();
+
+    if (!$ev->isCancelled()) {
       //TODO: deal with underwater TNT (underwater TNT treats water as if it has a blast resistance of 0)
       $explosion = new CustomExplosion
       (
@@ -90,6 +98,7 @@ class SmoothPrimedTNT extends PrimedTNT
       if ($ev->isBlockBreaking()) {
         $explosion->explodeA();
       }
+
       $explosion->explodeB();
     }
   }

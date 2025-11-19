@@ -10,6 +10,7 @@ use pocketmine\entity\effect\EffectInstance;
 use pocketmine\entity\effect\VanillaEffects;
 use pocketmine\inventory\Inventory;
 use pocketmine\item\Item;
+use pocketmine\item\ItemTypeIds;
 use pocketmine\item\PotionType;
 use pocketmine\item\VanillaItems;
 use pocketmine\player\GameMode;
@@ -50,6 +51,8 @@ class InventoryUtil
     $player->setFlying(false);
     $player->setNoClientPredictions(false);
     $player->setInvisible(false);
+    $player->getSettings()?->refreshFullBright();
+    $player->forceSyncAttributes();
   }
 
   // get the amount of an item in a player's inventory

@@ -13,6 +13,12 @@ class FormPartyInvite
 
   public static function formPartyInvite(SwimCore $core, SwimPlayer $player, Party $party): void
   {
+    $isLeader = $party->isPartyLeader($player);
+    if (!$isLeader && !$party->getSetting('membersCanInvite')) {
+      $player->sendMessage(TextFormat::RED . "You do not have permission to do this!");
+      return;
+    }
+
     if (!$party->canAddPlayerToParty()) {
       $party->sizeMessage($player);
       return;
@@ -58,6 +64,12 @@ class FormPartyInvite
 
   public static function formPartyRequests(SwimCore $core, SwimPlayer $player, Party $party): void
   {
+    $isLeader = $party->isPartyLeader($player);
+    if (!$isLeader && !$party->getSetting('membersCanAllowJoin')) {
+      $player->sendMessage(TextFormat::RED . "You do not have permission to do this!");
+      return;
+    }
+
     if (!$party->canAddPlayerToParty()) {
       $party->sizeMessage($player);
       return;
@@ -86,9 +98,11 @@ class FormPartyInvite
       $requested = $buttons[$playerName];
 
       // if invited player still online and in the hub and party its self is valid to invite then send the invite
-      if ($requested instanceof SwimPlayer && $requested->isConnected() && !$requested->getSceneHelper()?->isInParty() && $requested->isInScene("Hub")) {
+      if ($requested instanceof SwimPlayer && $requested->isConnected()
+        && !$requested->getSceneHelper()?->isInParty() && $requested->isInScene("Hub")) {
         $requested->sendMessage(TextFormat::GREEN . "You joined the party: " . TextFormat::YELLOW . $party->getPartyName());
         $party?->addPlayerToParty($requested);
+        $party?->removeJoinRequest($requested);
       }
     });
 

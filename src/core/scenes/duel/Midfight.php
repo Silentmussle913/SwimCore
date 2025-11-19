@@ -6,7 +6,7 @@ use core\custom\prefabs\boombox\KnockerBox;
 use core\custom\prefabs\pearl\SwimPearlItem;
 use core\systems\player\SwimPlayer;
 use core\systems\scene\misc\Team;
-use core\utils\BehaviorEventEnums;
+use core\utils\BehaviorEventEnum;
 use core\utils\CustomDamage;
 use core\utils\InventoryUtil;
 use jackmd\scorefactory\ScoreFactoryException;
@@ -33,7 +33,7 @@ class Midfight extends Duel
   {
     $this->registerCanceledEvents([
       // BehaviorEventEnums::PLAYER_DROP_ITEM_EVENT,
-      BehaviorEventEnums::BLOCK_BREAK_EVENT
+      BehaviorEventEnum::BLOCK_BREAK_EVENT
     ]);
     $this->kb = 0.4;
     $this->vertKB = 0.4;
@@ -82,7 +82,7 @@ class Midfight extends Duel
   /**
    * @throws ScoreFactoryException
    */
-  private function teamCheck(Team $killerTeam, Team $victimTeam)
+  private function teamCheck(Team $killerTeam, Team $victimTeam): void
   {
     foreach ($victimTeam->getPlayers() as $player) {
       if ($player->getGamemode() !== GameMode::SPECTATOR) {
@@ -129,7 +129,7 @@ class Midfight extends Duel
     $this->duelScoreboardWithScore($player);
   }
 
-  private function kit(int $enum)
+  private function kit(int $enum): void
   {
     foreach ($this->teamManager->getTeams() as $team) {
       if ($team->isSpecTeam()) continue; // skip spectators
@@ -166,6 +166,7 @@ class Midfight extends Duel
     foreach ($this->teamManager->getTeams() as $team) {
       $team->setTargetScore(3);
     }
+    parent::duelStart();
   }
 
   protected function duelOver(Team $winners, Team $losers): void
@@ -173,19 +174,20 @@ class Midfight extends Duel
     if ($winners->getTeamSize() > 1) {
       $this->partyWin($winners->getTeamName());
     } else { // assumes that it was a 1v1 and the 1 loser in the losers array is who we just beat
-      $loser = $this->losers[array_key_first($this->losers)];
+      // 3/29 rare crash fix attempt
+      $loser = !empty($this->losers) ? $this->losers[array_key_first($this->losers)] : null;
       $players = $winners->getPlayers();
-      $winner = $players[array_key_first($players)];
+      $winner = !empty($players) ? $players[array_key_first($players)] : null;
       if ($loser && $winner) {
         $attackerName = $winner->getNicks()->getNick();
         $loserName = $loser->getNicks()->getNick();
 
         // format their scores
-        $attackerString = TextFormat::GRAY . " [" . TextFormat::GREEN . $winners->getScore() . " Kills" . TextFormat::GRAY . "]";
-        $loserString = TextFormat::GRAY . " [" . TextFormat::GREEN . $losers->getScore() . " Kills" . TextFormat::GRAY . "]";
+        $attackerString = TextFormat::GRAY . " (" . TextFormat::GREEN . $winners->getScore() . " Kills" . TextFormat::GRAY . ")";
+        $loserString = TextFormat::GRAY . " (" . TextFormat::GREEN . $losers->getScore() . " Kills" . TextFormat::GRAY . ")";
 
         // game title text
-        $midfight = TextFormat::BOLD . TextFormat::GRAY . "[" . TextFormat::AQUA . "Midfight" . TextFormat::GRAY . "]" . TextFormat::RESET . " ";
+        $midfight = TextFormat::GRAY . "(" . TextFormat::AQUA . "Midfight" . TextFormat::GRAY . ")" . TextFormat::RESET . " ";
 
         $msg = $midfight . TextFormat::GREEN . $attackerName . $attackerString . TextFormat::YELLOW
           . " Killed " . TextFormat::RED . $loserName . $loserString;
@@ -201,7 +203,7 @@ class Midfight extends Duel
   // this logic seems wrong, needs to be rewritten anyway
   private function partyWin(string $winnerTeamName): void
   {
-    $midf = TextFormat::BOLD . TextFormat::GRAY . "[" . TextFormat::AQUA . "Midfight Parties" . TextFormat::GRAY . "]" . TextFormat::RESET . " ";
+    $midf = TextFormat::GRAY . "(" . TextFormat::AQUA . "Midfight Parties" . TextFormat::GRAY . ")" . TextFormat::RESET . " ";
 
     $loserTeamsArray = [];
     foreach ($this->teamManager->getTeams() as $team) {

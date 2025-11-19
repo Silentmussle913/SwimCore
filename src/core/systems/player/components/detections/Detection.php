@@ -22,7 +22,7 @@ abstract class Detection
 
   protected float $numFlags = 0;
   protected int $totalHits = 0; // does not decay
-  protected int $blockTime = 0;
+  protected int $blockTime = 10;
   protected int $sleep = 0; // counts down by one each tick, while this is greater than 0 the detection is disabled
 
   protected string $kickMsg = "Error Code: Pickle Chin Ahh Boy";
@@ -53,6 +53,13 @@ abstract class Detection
 
   public function changedGameMode(): void
   {
+  }
+
+  // A function to override for if this detection should only kick instead of ban when max flags have been hit and a punishment would be applied.
+  // By default, this will always return false, meaning a ban should happen instead of a kick
+  public function kickOnly(): bool
+  {
+    return false;
   }
 
   abstract protected function isReliable(): bool;
@@ -97,9 +104,15 @@ abstract class Detection
 
   protected function punish(string $reason = ""): void
   {
-    if ($this->blockTime > 0) {
+    if ($this->kickOnly()) {
+      $this->player->kick(TF::YELLOW . "You have been kicked by the network, you can rejoin in $this->blockTime seconds.");
+      return;
+    }
+
+    if ($this->blockTime > 0 && !SwimCore::$DEBUG && !SwimCore::$AC)  {
       $this->swimCore->getServer()->getNetwork()->blockAddress($this->player->getNetworkSession()->getIp(), $this->blockTime);
     }
+
     $this->BanPlayer($this->player, $this->swimCore); // ban them
     if ($this->shouldBroadcastKick()) {
       if ($reason == "") $reason = $this->name; // set reason to default name if needed
@@ -112,6 +125,7 @@ abstract class Detection
     if (!SwimCore::$AC) return; // won't punish if ac is disabled
     $kicked = TF::RED . "[BAN] " . TF::GREEN . "ANTICHEAT" . TF::WHITE . " Banned " . TF::GREEN . $player->getName() . TF::WHITE . ". Reason: " . TF::GREEN . $reason;
     CordHook::sendEmbed("Banned " . $player->getName() . " | " . $reason, "Microsoft AntiCheat BAN");
+    echo("Banned " . $player->getName() . " | " . $reason . "\n"); // log in console too
     self::StaffAlert($kicked, $core);
     $core->getServer()->broadcastMessage(TF::BOLD . TF::RED . "Microsoft AntiCheat has Removed " . TF::WHITE . $player->getName());
     $core->getLogger()->alert($kicked);

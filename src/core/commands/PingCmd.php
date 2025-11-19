@@ -46,28 +46,34 @@ class PingCmd extends BaseCommand
         $raknet = $args["raknet"] ?? false;
 
         if (isset($args["player"])) {
-          if ($this->core->getServer()->getPlayerExact($args["player"])) {
-            $target = $this->core->getServer()->getPlayerExact($args["player"]);
+          $plr = SeeNick::getPlayerFromNick($args["player"]);
+          if ($plr) {
+            $target = $plr;
           } else {
             $sender->sendMessage(TextFormat::RED . "Could not find player " . $args["player"]);
             return;
           }
         }
         if ($target instanceof SwimPlayer) {
-          $ping = !$raknet ? $target->getNslHandler()->getPing() : $target->getNetworkSession()->getPing();
+          $ping = !$raknet ? $target->getNslHandler()?->getPing() : $target->getNetworkSession()?->getPing() ?? 0;
           $color = TextFormat::GREEN;
           if ($ping > 170) {
             $color = TextFormat::RED;
           } else if ($ping > 85) {
             $color = TextFormat::YELLOW;
           }
-          $sender->sendMessage($target->getName() . "'s ping" . ($raknet ? " (Raknet)" : "") . ": " . $color . $ping . TextFormat::WHITE . "ms"
-            . ($raknet ? "" : ", jitter: " . TextFormat::GREEN . $target->getNslHandler()->getJitter() . TextFormat::WHITE . "ms"));
+          $sender->sendMessage(($target->getNicks()?->getNick() ?? $target->getName()) . "'s ping" . ($raknet ? " (Raknet)" : "") . ": " . $color . $ping . TextFormat::WHITE . "ms"
+            . ($raknet ? "" : ", jitter: " . TextFormat::GREEN . ($target->getNslHandler()?->getJitter() ?? 0) . TextFormat::WHITE . "ms"));
         } else {
           $sender->sendMessage(TextFormat::RED . "Not a player");
         }
       }
     }
+  }
+
+  public function getPermission(): ?string
+  {
+    return "use.all";
   }
 
 }

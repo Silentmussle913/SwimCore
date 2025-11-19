@@ -149,8 +149,10 @@ class EntitySystem extends System
   private function deserialize(): void
   {
     $prefabsDir = Path::canonicalize(Path::join(__DIR__, '..', '..', 'custom', 'prefabs')); // back 2 directories hence the double '..'
+    $entitiesDir = Path::canonicalize(Path::join(__DIR__, 'entities')); // forward a directory to get the entities
     if (is_dir($prefabsDir)) {
-      $this->loadActorScripts($prefabsDir);
+      $this->loadActorScripts($prefabsDir, 'core\\custom\\prefabs\\');
+      $this->loadActorScripts($entitiesDir, 'core\\systems\\entity\\entities\\');
     } else {
       echo "Error: " . $prefabsDir . " not found\n";
     }
@@ -159,7 +161,7 @@ class EntitySystem extends System
   /**
    * @throws ReflectionException
    */
-  private function loadActorScripts(string $directory): void
+  private function loadActorScripts(string $directory, string $startPath): void
   {
     echo "Loading Actor Scripts from: " . $directory . "\n";
     try {
@@ -170,7 +172,7 @@ class EntitySystem extends System
           $relativePath = str_replace('/', '\\', $relativePath); // Ensure correct namespace separators
           $relativePath = str_replace('.php', '', $relativePath); // Remove the .php extension
           // Construct the full class name with the appropriate namespace
-          $fullClassName = 'core\\custom\\prefabs\\' . $relativePath;
+          $fullClassName = $startPath . $relativePath;
           if (class_exists($fullClassName)) {
             $reflectionClass = new ReflectionClass($fullClassName);
             if (($reflectionClass->isSubclassOf(Actor::class) || $reflectionClass->isSubclassOf(Entity::class))

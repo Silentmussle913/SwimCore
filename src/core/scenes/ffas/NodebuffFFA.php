@@ -4,12 +4,13 @@ namespace core\scenes\ffas;
 
 use core\SwimCore;
 use core\systems\player\SwimPlayer;
-use core\utils\BehaviorEventEnums;
+use core\systems\scene\FFAInfo;
+use core\utils\BehaviorEventEnum;
 use core\utils\InventoryUtil;
 use jackmd\scorefactory\ScoreFactoryException;
 use pocketmine\event\entity\EntityDamageByEntityEvent;
 use pocketmine\event\player\PlayerItemUseEvent;
-use pocketmine\item\EnderPearl as PearlItem;
+use pocketmine\item\ItemTypeIds;
 use pocketmine\item\PotionType;
 use pocketmine\item\VanillaItems;
 use pocketmine\player\GameMode;
@@ -17,6 +18,11 @@ use pocketmine\utils\TextFormat;
 
 class NodebuffFFA extends FFA
 {
+
+  public static function getIcon(): string
+  {
+    return "textures/items/potion_bottle_splash_heal";
+  }
 
   public function __construct(SwimCore $core, string $name)
   {
@@ -27,10 +33,18 @@ class NodebuffFFA extends FFA
   function init(): void
   {
     parent::init();
+
+    $this->info = new FFAInfo(
+      "NodebuffFFA",
+      TextFormat::RED . "Nodebuff",
+      "PotFFA",
+      4
+    );
+
     $this->registerCanceledEvents([
-      BehaviorEventEnums::PLAYER_DROP_ITEM_EVENT,
-      BehaviorEventEnums::BLOCK_BREAK_EVENT,
-      BehaviorEventEnums::BLOCK_PLACE_EVENT
+      BehaviorEventEnum::PLAYER_DROP_ITEM_EVENT,
+      BehaviorEventEnum::BLOCK_BREAK_EVENT,
+      BehaviorEventEnum::BLOCK_PLACE_EVENT
     ]);
 
     // arena center
@@ -52,7 +66,7 @@ class NodebuffFFA extends FFA
   public function sceneItemUseEvent(PlayerItemUseEvent $event, SwimPlayer $swimPlayer): void
   {
     $item = $event->getItem();
-    if ($item instanceof PearlItem) {
+    if ($item->getTypeId() == ItemTypeIds::ENDER_PEARL) {
       $swimPlayer->getCoolDowns()->triggerItemCoolDownEvent($event, $item);
     }
   }
@@ -60,8 +74,9 @@ class NodebuffFFA extends FFA
   protected function playerKilled(SwimPlayer $attacker, SwimPlayer $victim, EntityDamageByEntityEvent $event): void
   {
     $this->potKillMessage($attacker, $victim);
-    $attacker->getCosmetics()->killMessageLogic($victim);
+    $attacker->getCosmetics()?->killMessageLogic($victim);
 
+    InventoryUtil::clearInventory($attacker);
     InventoryUtil::potKit($attacker);
   }
 
@@ -70,15 +85,14 @@ class NodebuffFFA extends FFA
     $attackerName = $attacker->getNicks()->getNick();
     $attackerPotCount = InventoryUtil::getItemCount($attacker, VanillaItems::SPLASH_POTION()->setType(PotionType::STRONG_HEALING()));
     $victimPotCount = InventoryUtil::getItemCount($victim, VanillaItems::SPLASH_POTION()->setType(PotionType::STRONG_HEALING()));
-    $attackerPotString = TextFormat::GRAY . " [" . TextFormat::GREEN . $attackerPotCount . TextFormat::GRAY . "]";
-    $victimPotString = TextFormat::GRAY . " [" . TextFormat::GREEN . $victimPotCount . TextFormat::GRAY . "]";
-    $potFFA = TextFormat::BOLD . TextFormat::GRAY . "[" . TextFormat::AQUA . "POT FFA" . TextFormat::GRAY . "]" . TextFormat::RESET . " ";
+    $attackerPotString = TextFormat::GRAY . " (" . TextFormat::GREEN . $attackerPotCount . TextFormat::GRAY . ")";
+    $victimPotString = TextFormat::GRAY . " (" . TextFormat::GREEN . $victimPotCount . TextFormat::GRAY . ")";
     if ($attackerPotCount > $victimPotCount) {
       $pots = $attackerPotCount - $victimPotCount;
-      $this->sceneAnnouncement($potFFA . TextFormat::GREEN . $attackerName . $attackerPotString . TextFormat::YELLOW
+      $this->sceneAnnouncement(TextFormat::GREEN . $attackerName . $attackerPotString . TextFormat::YELLOW
         . " " . $pots . " Potted " . TextFormat::RED . $victim->getNicks()->getNick() . $victimPotString);
     } else {
-      $this->sceneAnnouncement($potFFA . TextFormat::GREEN . $attackerName . $attackerPotString . TextFormat::YELLOW
+      $this->sceneAnnouncement(TextFormat::GREEN . $attackerName . $attackerPotString . TextFormat::YELLOW
         . " Killed " . TextFormat::RED . $victim->getNicks()->getNick() . $victimPotString);
     }
   }

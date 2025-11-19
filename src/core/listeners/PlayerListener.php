@@ -3,20 +3,24 @@
 namespace core\listeners;
 
 use core\database\queries\ConnectionHandler;
-use core\scenes\PvP;
 use core\SwimCore;
 use core\systems\entity\entities\EasierPickUpItemEntity;
 use core\systems\player\PlayerSystem;
 use core\systems\player\SwimPlayer;
+use core\systems\scene\Scene;
 use core\systems\SystemManager;
-use core\Utils\BehaviorEventEnums;
+use core\utils\BehaviorEventEnum;
+use core\utils\cordhook\CordHook;
 use core\utils\InventoryUtil;
 use core\utils\PositionHelper;
+use core\utils\security\IPParse;
+use jackmd\scorefactory\ScoreFactoryException;
 use pocketmine\block\BlockTypeIds;
 use pocketmine\event\block\BlockBreakEvent;
 use pocketmine\event\block\BlockFormEvent;
 use pocketmine\event\block\BlockPlaceEvent;
 use pocketmine\event\block\BlockSpreadEvent;
+use pocketmine\event\block\SignChangeEvent;
 use pocketmine\event\entity\EntityDamageByChildEntityEvent;
 use pocketmine\event\entity\EntityDamageByEntityEvent;
 use pocketmine\event\entity\EntityDamageEvent;
@@ -43,6 +47,7 @@ use pocketmine\event\player\PlayerJoinEvent;
 use pocketmine\event\player\PlayerJumpEvent;
 use pocketmine\event\player\PlayerQuitEvent;
 use pocketmine\event\player\PlayerToggleFlightEvent;
+use pocketmine\event\server\DataPacketReceiveEvent;
 use pocketmine\world\Position;
 
 class PlayerListener implements Listener
@@ -65,9 +70,19 @@ class PlayerListener implements Listener
   }
 
   // join handling
+
+  /**
+   * @throws ScoreFactoryException
+   */
   public function onJoin(PlayerJoinEvent $event)
   {
-    /* @var SwimPlayer $player */
+    if ($this->core->getRegionInfo()->autoTransfer !== "") {
+      [$ip, $port] = IPParse::sepIpFromPort($this->core->getRegionInfo()->autoTransfer);
+      $event->getPlayer()->transfer($ip, $port);
+      $event->setJoinMessage("");
+      return;
+    }
+    /** @var SwimPlayer $player */
     $player = $event->getPlayer();
     // I have hunger disabled on the server because it causes unwanted bugs. Will have my own custom hunger system when needed.
     $player->getHungerManager()->setEnabled(false);
@@ -76,6 +91,7 @@ class PlayerListener implements Listener
     // set up player session
     $this->playerSystem->registerPlayer($player);
     $player->init($this->core);
+    $player->getSceneHelper()?->setNewScene("Loading"); // add them to the loading scene
     // handle the player joining by logging connection and checking for punishments, if all checks are passed the data and session will be started and loaded
     ConnectionHandler::handlePlayerJoin($player);
   }
@@ -83,13 +99,23 @@ class PlayerListener implements Listener
   // leave handling
   public function onQuit(PlayerQuitEvent $event)
   {
+    if ($this->core->getRegionInfo()->autoTransfer !== "") {
+      $event->setQuitMessage("");
+      return;
+    }
     /* @var SwimPlayer $player */
     $player = $event->getPlayer();
     $event->setQuitMessage("§c[-] §e" . $player->getDisplayName());
 
+    // telemetry messaging
+    $server = $player->getServer();
+    $onlineCount = count($server->getOnlinePlayers()) - 1;
+    $msg = $player->getName() . " Logged off (" . $onlineCount . "/" . $server->getMaxPlayers() . ")";
+    CordHook::sendEmbed($msg, "Microsoft Telemetry", "Made by Swim Services", 0xFFD700); // yellow
+
     // send them back to spawn on leaving
     InventoryUtil::fullPlayerReset($player);
-    $hub = $this->core->getServer()->getWorldManager()->getWorldByName("hub");
+    $hub = $this->core->getHubWorld();
     $safeSpawn = $hub->getSafeSpawn();
     $player->teleport(new Position($safeSpawn->getX() + 0.5, $safeSpawn->getY(), $safeSpawn->getZ() + 0.5, $hub));
 
@@ -133,7 +159,7 @@ class PlayerListener implements Listener
       $player = $event->getEntity();
       if ($player instanceof SwimPlayer) {
         $player->resetTicksSinceMotionArtificiallySet(); // fix for throwing tnt and velocity check
-        $player->event($event, BehaviorEventEnums::ENTITY_DAMAGE_EVENT);
+        $player->event($event, BehaviorEventEnum::ENTITY_DAMAGE_EVENT);
         if ($event->isCancelled()) return;
         $player->getSceneHelper()?->getScene()?->sceneEntityDamageEvent($event, $player);
       }
@@ -144,7 +170,7 @@ class PlayerListener implements Listener
     if ($event instanceof EntityDamageByChildEntityEvent) {
       $player = $event->getEntity();
       if ($player instanceof SwimPlayer) {
-        $player->event($event, BehaviorEventEnums::ENTITY_DAMAGE_BY_CHILD_ENTITY_EVENT);
+        $player->event($event, BehaviorEventEnum::ENTITY_DAMAGE_BY_CHILD_ENTITY_EVENT);
         if ($event->isCancelled()) return;
         $player->getSceneHelper()?->getScene()?->sceneEntityDamageByChildEntityEvent($event, $player);
       }
@@ -154,6 +180,14 @@ class PlayerListener implements Listener
 
         $damager = $event->getDamager();
         if ($damager instanceof SwimPlayer) {
+          // anti cheat reach check (if ac data component isn't available for calling the method then flagged is false)
+          $flagged = $damager->getAntiCheatData()?->getReach()?->directReachCheck($player) ?? false;
+          if ($flagged) {
+            // we flagged for reach and should cancel the event and return
+            $event->cancel();
+            return;
+          }
+
           // HUGE PROBLEM : Scene's have custom damage handles for no critical hits. If we put this after the code below,
           // then we can't do the logic we need for health checking in attackedPlayer() for on killing,
           // as sceneEntityDamageByEntityEvent() could change the targets HP and mess with the intended logic.
@@ -163,14 +197,14 @@ class PlayerListener implements Listener
         }
 
         // then do the actual real events
-        $player->event($event, BehaviorEventEnums::ENTITY_DAMAGE_BY_ENTITY_EVENT);
+        $player->event($event, BehaviorEventEnum::ENTITY_DAMAGE_BY_ENTITY_EVENT);
         if ($event->isCancelled()) return;
         $player->getSceneHelper()?->getScene()?->sceneEntityDamageByEntityEvent($event, $player);
       }
     } else { // check if just generic damage like fall damage for example
       $player = $event->getEntity();
       if ($player instanceof SwimPlayer) {
-        $player->event($event, BehaviorEventEnums::ENTITY_DAMAGE_EVENT);
+        $player->event($event, BehaviorEventEnum::ENTITY_DAMAGE_EVENT);
         if ($event->isCancelled()) return;
         $player->getSceneHelper()?->getScene()?->sceneEntityDamageEvent($event, $player);
       }
@@ -220,7 +254,7 @@ class PlayerListener implements Listener
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
-    $sp->event($event, BehaviorEventEnums::PLAYER_DROP_ITEM_EVENT);
+    $sp->event($event, BehaviorEventEnum::PLAYER_DROP_ITEM_EVENT);
     if ($event->isCancelled()) return;
     $sp->getSceneHelper()?->getScene()->sceneItemDropEvent($event, $sp);
   }
@@ -234,7 +268,7 @@ class PlayerListener implements Listener
     $event->uncancel(); // this should never be cancelled before this listener is hit, this side steps around the spectator item use event always being cancelled
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
-    $sp->event($event, BehaviorEventEnums::PLAYER_ITEM_USE_EVENT);
+    $sp->event($event, BehaviorEventEnum::PLAYER_ITEM_USE_EVENT);
     if ($event->isCancelled()) return;
     $sp->getSceneHelper()?->getScene()->sceneItemUseEvent($event, $sp);
   }
@@ -244,7 +278,7 @@ class PlayerListener implements Listener
   {
     /* @var SwimPlayer $player */
     $player = $event->getTransaction()->getSource();
-    $player->event($event, BehaviorEventEnums::INVENTORY_TRANSACTION_EVENT);
+    $player->event($event, BehaviorEventEnum::INVENTORY_TRANSACTION_EVENT);
     if ($event->isCancelled()) return;
     $player->getSceneHelper()?->getScene()->sceneInventoryUseEvent($event, $player);
   }
@@ -273,17 +307,25 @@ class PlayerListener implements Listener
     if ($id == BlockTypeIds::CHEST || $id == BlockTypeIds::ENDER_CHEST || $id == BlockTypeIds::TRAPPED_CHEST) {
       /* @var SwimPlayer $player */
       $player = $event->getPlayer();
-      $player->event($event, BehaviorEventEnums::PLAYER_INTERACT_EVENT);
+      $player->event($event, BehaviorEventEnum::PLAYER_INTERACT_EVENT);
       if ($event->isCancelled()) return;
       $player->getSceneHelper()?->getScene()->scenePlayerInteractEvent($event, $player);
     }
   }
 
+  // No sign editing outside creative mode!
+  public function signEdit(SignChangeEvent $event): void
+  {
+    if (!$event->getPlayer()->isCreative()) {
+      $event->cancel();
+    }
+  }
+
   public function entityTeleportCallback(EntityTeleportEvent $event)
   {
-    /* @var SwimPlayer $player */
     $player = $event->getEntity();
-    $player->event($event, BehaviorEventEnums::ENTITY_TELEPORT_EVENT);
+    if (!($player instanceof SwimPlayer)) return;
+    $player->event($event, BehaviorEventEnum::ENTITY_TELEPORT_EVENT);
     if ($event->isCancelled()) return;
     $player->getSceneHelper()?->getScene()->sceneEntityTeleportEvent($event, $player);
   }
@@ -292,7 +334,7 @@ class PlayerListener implements Listener
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
-    $sp->event($event, BehaviorEventEnums::PLAYER_ITEM_CONSUME_EVENT);
+    $sp->event($event, BehaviorEventEnum::PLAYER_ITEM_CONSUME_EVENT);
     if ($event->isCancelled()) return;
     $sp->getSceneHelper()?->getScene()->scenePlayerConsumeEvent($event, $sp);
   }
@@ -301,7 +343,7 @@ class PlayerListener implements Listener
   {
     $player = $event->getEntity();
     if (!($player instanceof SwimPlayer)) return;
-    $player->event($event, BehaviorEventEnums::ENTITY_ITEM_PICKUP_EVENT);
+    $player->event($event, BehaviorEventEnum::ENTITY_ITEM_PICKUP_EVENT);
     if ($event->isCancelled()) return;
     $player->getSceneHelper()?->getScene()->scenePlayerPickupItem($event, $player);
   }
@@ -310,7 +352,7 @@ class PlayerListener implements Listener
   {
     $player = $event->getEntity()->getOwningEntity();
     if (!($player instanceof SwimPlayer)) return;
-    $player->event($event, BehaviorEventEnums::PROJECTILE_LAUNCH_EVENT);
+    $player->event($event, BehaviorEventEnum::PROJECTILE_LAUNCH_EVENT);
     if ($event->isCancelled()) return;
     $player->getSceneHelper()?->getScene()->sceneProjectileLaunchEvent($event, $player);
   }
@@ -320,7 +362,7 @@ class PlayerListener implements Listener
   {
     $player = $event->getEntity()->getOwningEntity();
     if (!($player instanceof SwimPlayer)) return;
-    $player->event($event, BehaviorEventEnums::PROJECTILE_HIT_EVENT);
+    $player->event($event, BehaviorEventEnum::PROJECTILE_HIT_EVENT);
     $player->getSceneHelper()?->getScene()->sceneProjectileHitEvent($event, $player);
   }
 
@@ -328,7 +370,7 @@ class PlayerListener implements Listener
   {
     $player = $event->getEntity();
     if (!($player instanceof SwimPlayer)) return;
-    $player->event($event, BehaviorEventEnums::ENTITY_REGAIN_HEALTH_EVENT);
+    $player->event($event, BehaviorEventEnum::ENTITY_REGAIN_HEALTH_EVENT);
     if ($event->isCancelled()) return;
     $player->getSceneHelper()?->getScene()->sceneEntityRegainHealthEvent($event, $player);
   }
@@ -340,7 +382,7 @@ class PlayerListener implements Listener
     if ($entityHit instanceof SwimPlayer) {
       $player = $event->getEntity();
       if (!($player instanceof SwimPlayer)) return;
-      $player->event($event, BehaviorEventEnums::PROJECTILE_HIT_ENTITY_EVENT);
+      $player->event($event, BehaviorEventEnum::PROJECTILE_HIT_ENTITY_EVENT);
       $player->getSceneHelper()?->getScene()->sceneProjectileHitEntityEvent($event, $player);
     }
   }
@@ -357,7 +399,7 @@ class PlayerListener implements Listener
     $entity = $event->getEntity();
     $owner = $entity->getOwningEntity();
     if ($owner instanceof SwimPlayer) {
-      $owner->event($event, BehaviorEventEnums::ENTITY_SPAWN_EVENT);
+      $owner->event($event, BehaviorEventEnum::ENTITY_SPAWN_EVENT);
       $owner->getSceneHelper()?->getScene()->scenePlayerSpawnChildEvent($event, $owner, $entity);
     }
   }
@@ -366,7 +408,7 @@ class PlayerListener implements Listener
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
-    $sp->event($event, BehaviorEventEnums::BLOCK_PLACE_EVENT);
+    $sp->event($event, BehaviorEventEnum::BLOCK_PLACE_EVENT);
     if ($event->isCancelled()) return;
     $sp->getSceneHelper()?->getScene()->sceneBlockPlaceEvent($event, $sp);
   }
@@ -375,7 +417,7 @@ class PlayerListener implements Listener
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
-    $sp->event($event, BehaviorEventEnums::BLOCK_BREAK_EVENT);
+    $sp->event($event, BehaviorEventEnum::BLOCK_BREAK_EVENT);
     if ($event->isCancelled()) return;
     $sp->getSceneHelper()?->getScene()->sceneBlockBreakEvent($event, $sp);
     // desperate fix
@@ -390,14 +432,14 @@ class PlayerListener implements Listener
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
-    $sp->event($event, BehaviorEventEnums::BUCKET_EMPTY_EVENT);
+    $sp->event($event, BehaviorEventEnum::BUCKET_EMPTY_EVENT);
     if ($event->isCancelled()) return;
 
     $scene = $sp->getSceneHelper()?->getScene();
     if ($scene) {
       $scene->sceneBucketEmptyEvent($event, $sp);
-      if (!$event->isCancelled() && $scene instanceof PvP) {
-        $scene->getBlockManager()->handleBucketDump($event);
+      if (!$event->isCancelled()) {
+        $scene->getBlockManager()?->handleBucketDump($event);
       }
     }
   }
@@ -406,7 +448,7 @@ class PlayerListener implements Listener
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
-    $sp->event($event, BehaviorEventEnums::BUCKET_FILL_EVENT);
+    $sp->event($event, BehaviorEventEnum::BUCKET_FILL_EVENT);
     if ($event->isCancelled()) return;
     $sp->getSceneHelper()?->getScene()->sceneBucketFillEvent($event, $sp);
   }
@@ -425,31 +467,24 @@ class PlayerListener implements Listener
   {
     $scene = $this->getSceneFromBlockEvent($event); // attempt to get the scene the block event happened in
     if ($scene) {
-      $scene->getBlockManager()->handleNaturalBlockEvent($event);
+      $scene->getBlockManager()?->handleNaturalBlockEvent($event);
     } else {
       $event->cancel();
     }
   }
 
-  private function getSceneFromBlockEvent(BlockSpreadEvent|BlockFormEvent $event): ?PvP
+  private function getSceneFromBlockEvent(BlockSpreadEvent|BlockFormEvent $event): ?Scene
   {
     $pos = $event->getBlock()->getPosition();
     $nearest = PositionHelper::getNearestPlayer($pos); // nearest player's scene (this is only going to work well for scenes that are seperated far away)
-    if ($nearest) {
-      $scene = $nearest->getSceneHelper()?->getScene() ?? null;
-      if ($scene instanceof PvP) { // only pvp scenes have a block manager, this could be seen as a design flaw, but almost all our scenes derive from pvp anyway
-        return $scene;
-      }
-    }
-
-    return null;
+    return $nearest?->getSceneHelper()?->getScene();
   }
 
   public function startFlying(PlayerToggleFlightEvent $event)
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
-    $sp->event($event, BehaviorEventEnums::PLAYER_TOGGLE_FLIGHT_EVENT);
+    $sp->event($event, BehaviorEventEnum::PLAYER_TOGGLE_FLIGHT_EVENT);
     if ($event->isCancelled()) return;
     $sp->getSceneHelper()?->getScene()->scenePlayerToggleFlightEvent($event, $sp);
   }
@@ -458,21 +493,20 @@ class PlayerListener implements Listener
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
-    $sp->event($event, BehaviorEventEnums::PLAYER_JUMP_EVENT);
+    $sp->event($event, BehaviorEventEnum::PLAYER_JUMP_EVENT);
     $sp->getSceneHelper()?->getScene()->scenePlayerJumpEvent($event, $sp);
   }
 
-  // lag causer possibly, we might need this though but only for behavior components
-  /*
   public function dataPacketReceiveEvent(DataPacketReceiveEvent $event)
   {
-    $player = $event->getOrigin()->getPlayer();
-    if ($player instanceof SwimPlayer && $player->isOnline()) {
-      $player->event($event, BehaviorEventEnums::DATA_PACKET_RECEIVE_EVENT);
-      if ($event->isCancelled()) return;
-      $player->getSceneHelper()?->getScene()->sceneDataPacketReceiveEvent($event, $player);
+    $player = $event->getOrigin()?->getPlayer();
+    if (!isset($player)) return;
+
+    /** @var SwimPlayer $player */
+    if ($player->isOnline()) {
+      // $player->event($event, BehaviorEventEnums::DATA_PACKET_RECEIVE_EVENT);
+      $player->getSceneHelper()?->getScene()?->sceneDataPacketReceiveEvent($event, $player);
     }
   }
-  */
 
 }

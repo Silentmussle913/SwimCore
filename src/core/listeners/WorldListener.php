@@ -3,11 +3,9 @@
 namespace core\listeners;
 
 use core\SwimCore;
-use core\systems\player\components\ClickHandler;
 use core\systems\player\PlayerSystem;
 use core\systems\player\SwimPlayer;
 use core\systems\SystemManager;
-use core\utils\AcData;
 use core\utils\acktypes\EntityPositionAck;
 use core\utils\acktypes\EntityRemovalAck;
 use core\utils\acktypes\KnockbackAck;
@@ -15,25 +13,36 @@ use core\utils\raklib\StubLogger;
 use core\utils\raklib\SwimNetworkSession;
 use Exception;
 use pocketmine\block\BlockTypeIds;
+use pocketmine\block\inventory\EnchantInventory;
 use pocketmine\block\VanillaBlocks;
 use pocketmine\entity\animation\ArmSwingAnimation;
 use pocketmine\entity\Location;
+use pocketmine\entity\object\FallingBlock;
 use pocketmine\event\block\BlockBreakEvent;
 use pocketmine\event\block\BlockBurnEvent;
 use pocketmine\event\block\BlockGrowEvent;
 use pocketmine\event\block\BlockMeltEvent;
 use pocketmine\event\block\LeavesDecayEvent;
 use pocketmine\event\entity\EntityDamageEvent;
+use pocketmine\event\entity\EntitySpawnEvent;
+use pocketmine\event\Event;
+use pocketmine\event\inventory\InventoryCloseEvent;
+use pocketmine\event\inventory\InventoryOpenEvent;
 use pocketmine\event\inventory\InventoryTransactionEvent;
 use pocketmine\event\Listener;
 use pocketmine\event\player\PlayerDeathEvent;
+use pocketmine\event\player\PlayerDropItemEvent;
 use pocketmine\event\player\PlayerExhaustEvent;
 use pocketmine\event\player\PlayerInteractEvent;
 use pocketmine\event\server\DataPacketReceiveEvent;
 use pocketmine\event\server\DataPacketSendEvent;
+use pocketmine\event\server\QueryRegenerateEvent;
 use pocketmine\event\world\WorldLoadEvent;
 use pocketmine\inventory\PlayerOffHandInventory;
+use pocketmine\inventory\transaction\action\SlotChangeAction;
 use pocketmine\item\ConsumableItem;
+use pocketmine\item\ItemTypeIds;
+use pocketmine\item\VanillaItems;
 use pocketmine\network\mcpe\protocol\ActorEventPacket;
 use pocketmine\network\mcpe\protocol\AddActorPacket;
 use pocketmine\network\mcpe\protocol\AddPlayerPacket;
@@ -41,17 +50,18 @@ use pocketmine\network\mcpe\protocol\BlockEventPacket;
 use pocketmine\network\mcpe\protocol\CommandRequestPacket;
 use pocketmine\network\mcpe\protocol\CraftingDataPacket;
 use pocketmine\network\mcpe\protocol\CreativeContentPacket;
+use pocketmine\network\mcpe\protocol\DataPacket;
 use pocketmine\network\mcpe\protocol\InteractPacket;
 use pocketmine\network\mcpe\protocol\InventoryTransactionPacket;
 use pocketmine\network\mcpe\protocol\LevelSoundEventPacket;
 use pocketmine\network\mcpe\protocol\MoveActorAbsolutePacket;
 use pocketmine\network\mcpe\protocol\MoveActorDeltaPacket;
 use pocketmine\network\mcpe\protocol\NetworkStackLatencyPacket;
-use pocketmine\network\mcpe\protocol\PlayerAuthInputPacket;
 use pocketmine\network\mcpe\protocol\PlayerListPacket;
 use pocketmine\network\mcpe\protocol\ProtocolInfo;
 use pocketmine\network\mcpe\protocol\RemoveActorPacket;
 use pocketmine\network\mcpe\protocol\RequestChunkRadiusPacket;
+use pocketmine\network\mcpe\protocol\ResourcePacksInfoPacket;
 use pocketmine\network\mcpe\protocol\ResourcePackStackPacket;
 use pocketmine\network\mcpe\protocol\ServerboundDiagnosticsPacket;
 use pocketmine\network\mcpe\protocol\ServerboundPacket;
@@ -67,17 +77,19 @@ use pocketmine\network\mcpe\protocol\types\command\CommandOriginData;
 use pocketmine\network\mcpe\protocol\types\entity\EntityMetadataProperties;
 use pocketmine\network\mcpe\protocol\types\entity\StringMetadataProperty;
 use pocketmine\network\mcpe\protocol\types\Experiments;
-use pocketmine\network\mcpe\protocol\types\inventory\UseItemOnEntityTransactionData;
 use pocketmine\network\mcpe\protocol\types\inventory\UseItemTransactionData;
 use pocketmine\network\mcpe\protocol\types\LevelSoundEvent;
-use pocketmine\network\mcpe\protocol\types\PlayerAuthInputFlags;
+use pocketmine\network\mcpe\protocol\types\recipe\ShapedRecipe;
+use pocketmine\network\mcpe\protocol\types\recipe\ShapelessRecipe;
+use pocketmine\network\mcpe\protocol\types\resourcepacks\ResourcePackStackEntry;
 use pocketmine\player\GameMode;
 use pocketmine\player\Player;
-use pocketmine\utils\TextFormat as TF;
+use pocketmine\player\XboxLivePlayerInfo;
 use pocketmine\world\format\io\BaseWorldProvider;
 use pocketmine\world\World;
 use ReflectionClass;
 use ReflectionException;
+use ReflectionProperty;
 
 // this listener is just a bunch of tweaks to make global vanilla events better
 
@@ -97,6 +109,55 @@ class WorldListener implements Listener
     $this->systemManager = $this->core->getSystemManager();
     $this->playerSystem = $this->systemManager->getPlayerSystem();
     $this->cacheArmorSounds();
+  }
+
+  // not every scene might want this lapis behavior!
+
+  public function openTable(InventoryOpenEvent $e): void
+  {
+    $inventory = $e->getInventory();
+    if ($inventory instanceof EnchantInventory) {
+      // add nbt if u want
+      $inventory->setItem(1, VanillaItems::LAPIS_LAZULI()->setCount(64)->setCustomName("Lapis"));
+    }
+  }
+
+  public function closeTable(InventoryCloseEvent $event): void
+  {
+    $inventory = $event->getInventory();
+    $player = $event->getPlayer();
+    if ($inventory instanceof EnchantInventory) {
+      $inventory->clear(1);
+    }
+  }
+
+  public function onDropItem(PlayerDropItemEvent $event): void
+  {
+    $player = $event->getPlayer();
+    $item = $event->getItem();
+    if ($item->hasCustomName()) {
+      if ($item->getTypeId() === VanillaItems::LAPIS_LAZULI()->getTypeId()) {
+        $player->getInventory()->remove($item);
+        $event->cancel();
+      }
+    }
+  }
+
+  // this is only for making it so the player can not move lapis out of the enchantment table
+  // again not every scene might want this behavior!
+  public function onEnchantInv(InventoryTransactionEvent $event): void
+  {
+    foreach ($event->getTransaction()->getInventories() as $inventory) {
+      if ($inventory instanceof EnchantInventory) {
+        foreach ($event->getTransaction()->getActions() as $action) {
+          if ($action instanceof SlotChangeAction) {
+            if ($action->getTargetItem()->getTypeId() === VanillaItems::LAPIS_LAZULI()->getTypeId()) {
+              $event->cancel();
+            }
+          }
+        }
+      }
+    }
   }
 
   public function cacheArmorSounds(): void
@@ -158,9 +219,15 @@ class WorldListener implements Listener
     $event->cancel();
   }
 
-  // only cancels door opens in the hub
+  // cancels trying to use beds and cancels door opens in the hub
   public function hubBlockInteract(PlayerInteractEvent $event)
   {
+    // No sleeping!
+    if ($event->getAction() == PlayerInteractEvent::RIGHT_CLICK_BLOCK && $event->getBlock()->getTypeId() == BlockTypeIds::BED) {
+      $event->cancel();
+      return;
+    }
+
     $player = $event->getPlayer();
     if (!$player->isCreative() && $player->getWorld()->getFolderName() === "hub") {
       $blockName = strtolower($event->getBlock()->getName());
@@ -184,13 +251,10 @@ class WorldListener implements Listener
   // disable sending the chemistry pack to players on joining so particles look fine
   public function onDataPacketSendEvent(DataPacketSendEvent $event): void
   {
-    // UNCOMMENT OUT THE BLOCKED COMMENTS IF YOU ARE USING MULTI VERSION (nether games, swim services fork, etc.)
-    /*
     $protocol = ProtocolInfo::CURRENT_PROTOCOL;
-    if (isset($event->getTargets()[0])) {
+    if (isset($event->getTargets()[0]) && SwimCore::$isNetherGames) {
       $protocol = $event->getTargets()[0]->getProtocolId();
     }
-    */
 
     $packets = $event->getPackets();
     foreach ($packets as $packet) {
@@ -203,28 +267,14 @@ class WorldListener implements Listener
           }
         }
         // experiment resource pack
-        /*
         if ($protocol == 671) {
           $packet->experiments = new Experiments(["updateAnnouncedLive2023" => true], true);
           $stack[] = new ResourcePackStackEntry("d8989e4d-5217-4d57-a6f6-1787c620be97", "0.0.1", "");
         }
-        */
         break;
       }
     }
   }
-
-  // rod sound
-  /* leave this to the custom rod class to implement
-  public function rodCastSound(PlayerItemUseEvent $event)
-  {
-    $player = $event->getPlayer();
-    $item = $event->getItem();
-    if ($item->getName() == "Fishing Rod") {
-      ServerSounds::playSoundToPlayer($player, "random.bow", 2, 1);
-    }
-  }
-  */
 
   // prevent player drops (be mindful of this event's existence if we are ever programming a game where we want entity drops to go somewhere like a chest)
   public function onPlayerDeath(PlayerDeathEvent $event)
@@ -242,6 +292,40 @@ class WorldListener implements Listener
     }
   }
   */
+
+  /* this was screwing stuff up and not showing break progress on anything at all
+  public function onBlockInteract(PlayerInteractEvent $event)
+  {
+    $player = $event->getPlayer();
+    if (!$player->isCreative()) {
+      $block = $event->getBlock();
+      $id = $block->getTypeId();
+      if ($id == BlockTypeIds::CHEST || $id == BlockTypeIds::ENDER_CHEST) return; // if it's a chest we can interact with it so exit out early
+
+      // cancel log stripping
+      $heldItem = $player->getInventory()->getItemInHand();
+      if (str_contains(strtolower($heldItem->getName()), "axe")) {
+        $event->cancel();
+      }
+
+      // cancel sign editing
+      if (str_contains(strtolower($event->getBlock()->getName()), "sign")) {
+        $event->cancel();
+      }
+    }
+  }
+  */
+
+  public function onBlockFall(EntitySpawnEvent $event)
+  {
+    $fallingBlockEntity = $event->getEntity();
+    if ($fallingBlockEntity instanceof FallingBlock) {
+      $block = $fallingBlockEntity->getBlock();
+      $world = $fallingBlockEntity->getWorld();
+      $world->setBlock($block->getPosition(), $block, false);
+      $fallingBlockEntity->kill();
+    }
+  }
 
   // never have exhaust
   public function onExhaust(PlayerExhaustEvent $event)
@@ -280,8 +364,6 @@ class WorldListener implements Listener
       /** @var SwimPlayer $player */
       $this->swingAnimationFix($event, $packet, $player);
       $this->handleReceive($packet, $player, $event);
-      $this->handleInput($event, $player); // update player info based on input
-      $this->processSwing($event, $player); // when player swings there fist (left click)
     }
   }
 
@@ -354,7 +436,7 @@ class WorldListener implements Listener
         }
         break;
       case ServerSettingsRequestPacket::NETWORK_ID:
-        // (new SettingsForm($this->divinityCore))->settingsForm($player, true); // psuedo from divinity's code base
+        // (new SettingsForm($this->divinityCore))->settingsForm($player, true);
         break;
       case InteractPacket::NETWORK_ID:
         /** @var InteractPacket $packet */
@@ -367,6 +449,48 @@ class WorldListener implements Listener
         }
         break;
     }
+
+    // seems unneeded due to swim core framework already ticking everything when needed
+    // $this->tickDetections($player, $packet, $event);
+  }
+
+  // useless for the time being due to swimcore framework already doing this stuff, the add after packet handle cb is interesting though
+  private function tickDetections(SwimPlayer $player, DataPacket $packet, Event $event): void
+  {
+    // PluginTimings::$acChecks->startTiming();
+    //foreach ($player->getAntiCheatData()->getDetections() as $detection) {
+    // if ($detection->handlesPacket($packet->pid())) {
+    //  if ($detection->shouldProcessAfterHandling()) {
+    /** @var SwimNetworkSession */
+    //$ns = $player->getNetworkSession();
+    //$ns->addAfterPacketHandledCb(function() use($detection, $event) : void {
+    // $detection->getTimings()->startTiming();
+    //$detection->handle($event);
+    // $detection->getTimings()->stopTiming();
+    // });
+    // } else {
+    // $detection->getTimings()->startTiming();
+    //$detection->handle($event);
+    // $detection->getTimings()->stopTiming();
+    // }
+    // }
+    //}
+    // PluginTimings::$acChecks->stopTiming();
+  }
+
+  private function enableVibrantVisuals(DataPacketSendEvent $event, ResourcePacksInfoPacket $packet): void
+  {
+    (new ReflectionProperty(ResourcePacksInfoPacket::class, "forceDisableVibrantVisuals"))->setValue($packet, false);
+    $pl = $event->getTargets()[0];
+    $info = $pl->getPlayerInfo();
+    if ($info instanceof XboxLivePlayerInfo) {
+      $event->cancel();
+      $disableVibrantVisuals = false;
+      (new ReflectionProperty(ResourcePacksInfoPacket::class, "forceDisableVibrantVisuals"))->setValue($packet, $disableVibrantVisuals);
+      if ($pl instanceof SwimNetworkSession) {
+        $pl->sendDataPacketNoEvent($packet);
+      }
+    }
   }
 
   /**
@@ -378,6 +502,11 @@ class WorldListener implements Listener
 
     foreach ($packets as $key => $packet) {
       switch ($packet->pid()) {
+        case ResourcePacksInfoPacket::NETWORK_ID:
+          /** @var $packet ResourcePacksInfoPacket */
+          $this->enableVibrantVisuals($event, $packet);
+          return;
+
         case CraftingDataPacket::NETWORK_ID:
           // $this->handleCraftingPacket($packet, $packets, $key); // I couldn't figure this out for only allowing certain recipes
           break;
@@ -394,7 +523,7 @@ class WorldListener implements Listener
           $this->handleStartGamePacket($packet, $event, $key);
           break;
 
-        /* Deprecated, see CustomItemLoader
+        /* deprecated, See CustomItemLoader
       case CreativeContentPacket::NETWORK_ID:
         $this->handleCreativeContentPacket($packet, $event, $key);
         break;
@@ -435,14 +564,99 @@ class WorldListener implements Listener
     $event->setPackets($packets);
   }
 
-  // disables crafting completely, intended for 1.21 at the moment
-  private function processCraftingPacket($packet, &$packets, $key): bool
+  // this is for ranked sky wars
+  private static array $allowedRecipes = [
+    // Essential items
+    ItemTypeIds::STICK,
+    ItemTypeIds::SHEARS,
+    ItemTypeIds::BUCKET,
+
+    // Diamond tools and armor
+    ItemTypeIds::DIAMOND_SWORD,
+    ItemTypeIds::DIAMOND_PICKAXE,
+    ItemTypeIds::DIAMOND_AXE,
+    ItemTypeIds::DIAMOND_SHOVEL,
+    ItemTypeIds::DIAMOND_HOE,
+    ItemTypeIds::DIAMOND_HELMET,
+    ItemTypeIds::DIAMOND_CHESTPLATE,
+    ItemTypeIds::DIAMOND_LEGGINGS,
+    ItemTypeIds::DIAMOND_BOOTS,
+
+    // Iron tools and armor
+    ItemTypeIds::IRON_SWORD,
+    ItemTypeIds::IRON_PICKAXE,
+    ItemTypeIds::IRON_AXE,
+    ItemTypeIds::IRON_SHOVEL,
+    ItemTypeIds::IRON_HOE,
+    ItemTypeIds::IRON_HELMET,
+    ItemTypeIds::IRON_CHESTPLATE,
+    ItemTypeIds::IRON_LEGGINGS,
+    ItemTypeIds::IRON_BOOTS,
+
+    // Gold tools and armor
+    ItemTypeIds::GOLDEN_SWORD,
+    ItemTypeIds::GOLDEN_PICKAXE,
+    ItemTypeIds::GOLDEN_AXE,
+    ItemTypeIds::GOLDEN_SHOVEL,
+    ItemTypeIds::GOLDEN_HOE,
+    ItemTypeIds::GOLDEN_HELMET,
+    ItemTypeIds::GOLDEN_CHESTPLATE,
+    ItemTypeIds::GOLDEN_LEGGINGS,
+    ItemTypeIds::GOLDEN_BOOTS,
+
+    // Stone tools
+    ItemTypeIds::STONE_SWORD,
+    ItemTypeIds::STONE_PICKAXE,
+    ItemTypeIds::STONE_AXE,
+    ItemTypeIds::STONE_SHOVEL,
+    ItemTypeIds::STONE_HOE,
+
+    // Wooden tools
+    ItemTypeIds::WOODEN_SWORD,
+    ItemTypeIds::WOODEN_PICKAXE,
+    ItemTypeIds::WOODEN_AXE,
+    ItemTypeIds::WOODEN_SHOVEL,
+    ItemTypeIds::WOODEN_HOE,
+
+    // Ranged weapons
+    ItemTypeIds::BOW,
+    ItemTypeIds::ARROW,
+  ];
+
+  private function handleCraftingPacket($packet, &$packets, $key): void
   {
-    if ($packet instanceof CraftingDataPacket) {
-      unset($packets[$key]);
-      return true;
+    /** @var CraftingDataPacket $packet */
+
+    // Iterate through the recipes to identify the ones you want to keep
+    foreach ($packet->recipesWithTypeIds as $recipe) {
+      if ($recipe instanceof ShapelessRecipe) {
+        // Check if the output of the recipe matches allowed items
+        foreach ($recipe->getOutputs() as $output) {
+          if (in_array($output->getId(), self::$allowedRecipes, true)) {
+            // Don't unset the packet if it contains an allowed recipe
+            if (SwimCore::$DEBUG) {
+              echo("Allowing item: " . $output->getId());
+            }
+            return;
+          }
+        }
+      } else if ($recipe instanceof ShapedRecipe) {
+        // Check if the output of the recipe matches allowed items
+        $outputs = $recipe->getOutput();
+        foreach ($outputs as $output) {
+          if (in_array($output->getId(), self::$allowedRecipes, true)) {
+            // Don't unset the packet if it contains an allowed recipe
+            if (SwimCore::$DEBUG) {
+              echo("Allowing item: " . $output->getId());
+            }
+            return;
+          }
+        }
+      }
     }
-    return false;
+
+    // Remove the packet if no allowed recipes are found
+    unset($packets[$key]);
   }
 
   /**
@@ -475,22 +689,25 @@ class WorldListener implements Listener
   private function handleStartGamePacket($packet, $event, $key): void
   {
     /** @var StartGamePacket $packet */
-    for ($i = 0; $i < count($packet->itemTable); $i++) {
-      if (str_contains($packet->itemTable[$i]->getStringId(), "element") ||
-        str_contains($packet->itemTable[$i]->getStringId(), "chemistry")) {
-        $playerName = $event->getTargets()[$key]->getPlayer()->getName() ?? "null";
-        $this->eduItemIds[$playerName][] = $packet->itemTable[$i]->getNumericId();
-        unset($packet->itemTable[$i]);
+    if (isset($packet->itemTable)) { // Vanilla PM does not have an item table
+      for ($i = 0; $i < count($packet->itemTable); $i++) {
+        if (str_contains($packet->itemTable[$i]->getStringId(), "element") ||
+          str_contains($packet->itemTable[$i]->getStringId(), "chemistry")) {
+          $playerName = $event->getTargets()[$key]->getPlayer()->getName() ?? "null";
+          $this->eduItemIds[$playerName][] = $packet->itemTable[$i]->getNumericId();
+          unset($packet->itemTable[$i]);
+        }
       }
     }
 
     $packet->levelSettings->gameRules["dodaylightcycle"] = new BoolGameRule(false, false);
+    $packet->levelSettings->gameRules["locatorBar"] = new BoolGameRule(false, false);
     $packet->levelSettings->time = World::TIME_DAY;
 
     $experiments = ["deferred_technical_preview" => true];
 
     $protocol = ProtocolInfo::CURRENT_PROTOCOL;
-    if (isset($event->getTargets()[0])) {
+    if (isset($event->getTargets()[0]) && SwimCore::$isNetherGames) {
       $protocol = $event->getTargets()[0]->getProtocolId();
     }
 
@@ -503,7 +720,7 @@ class WorldListener implements Listener
 
   /**
    * Handles the CreativeContentPacket.
-   * @deprecated See CustomItemLoader
+   * @deprecated Deprecated, see CustomItemLoader
    */
   private function handleCreativeContentPacket($packet, $event, $key): void
   {
@@ -714,83 +931,59 @@ class WorldListener implements Listener
     }
   }
 
-  private function handleInput(DataPacketReceiveEvent $event, SwimPlayer $swimPlayer): void
+  /* no longer called here manually as AckHandler has decoupled this logic into its self inside the recv() method, we also do actor handling packets in the code above
+  private function processAck($packet, &$packets, $event): void
   {
-    $packet = $event->getPacket();
-    if (!($packet instanceof PlayerAuthInputPacket)) return;
+    // add move actor absolute packets
+    if ($packet instanceof MoveActorAbsolutePacket || $packet instanceof AddActorPacket || $packet instanceof AddPlayerPacket) {
+      $timestamp = NetworkStackLatencyHandler::randomIntNoZeroEnd();
+      $tp = false;
+      if (isset($packet->flags)) {
+        $tp = $packet->flags & MoveActorAbsolutePacket::FLAG_TELEPORT > 0;
+      }
+      foreach ($event->getTargets() as $target) {
+        $pl = $target->getPlayer();
+        $pl->getAckHandler()?->add($packet->actorRuntimeId, $packet->position, $timestamp, $tp);
+      }
 
-    $swimPlayer->setExactPosition($packet->getPosition()->subtract(0, 1.62, 0)); // I don't know what the point of exact position is, something from GameParrot
+      $packets[] = NetworkStackLatencyPacket::create($timestamp * 1000, true);
+    }
 
-    // auto sprint
-    $settings = $swimPlayer->getSettings();
-    if ($settings) {
-      if ($settings->isAutoSprint()) {
-        if ($packet->getMoveVecZ() > 0.5) {
-          $swimPlayer->setSprinting();
-        } else {
-          $swimPlayer->setSprinting(false);
-        }
+    // and then remove from the ack handler if needed
+    if ($packet instanceof RemoveActorPacket) {
+      $timestamp = NetworkStackLatencyHandler::randomIntNoZeroEnd();
+      foreach ($event->getTargets() as $target) {
+        $pl = $target->getPlayer();
+        $pl->getAckHandler()?->addRemoval($packet->actorUniqueId, $timestamp);
+      }
+      $packets[] = NetworkStackLatencyPacket::create($timestamp * 1000, true);
+    }
+
+    // add motion if needed
+    if ($packet instanceof SetActorMotionPacket) {
+      $timestamp = NetworkStackLatencyHandler::randomIntNoZeroEnd();
+      foreach ($event->getTargets() as $target) {
+        $pl = $target->getPlayer();
+        if ($pl->getId() != $packet->actorRuntimeId) continue;
+        $pl->getAckHandler()?->addKb($packet->motion, $timestamp);
+        $pl->getNetworkSession()->sendDataPacket(NetworkStackLatencyPacket::create($timestamp, true));
       }
     }
   }
+  */
 
-  private int $threshold = 45; // in MS, this is supposed to 50 but that cancels way too much CPS
-
-  private static string $spacer = TF::GRAY . " | " . TF::RED;
-
-  private function processSwing(DataPacketReceiveEvent $event, SwimPlayer $swimPlayer): void
-  {
-    $packet = $event->getPacket();
-    $swung = false;
-
-    if ($packet instanceof PlayerAuthInputPacket) {
-      // $swung = (($packet->getInputFlags() & (1 << PlayerAuthInputFlags::MISSED_SWING)) !== 0);
-      // 1.21.50: Instead of performing a bitwise & on a BitSet, call get() with the index
-      $swung = $packet->getInputFlags()->get(PlayerAuthInputFlags::MISSED_SWING);
-    }
-
-    if ($packet instanceof LevelSoundEventPacket) {
-      $swung = $packet->sound == LevelSoundEvent::ATTACK_NODAMAGE;
-    }
-
-    if ($swung || ($packet instanceof InventoryTransactionPacket && $packet->trData instanceof UseItemOnEntityTransactionData)) {
-      $ch = $swimPlayer->getClickHandler();
-      if ($ch) {
-
-        $isRanked = $swimPlayer->getSceneHelper()?->getScene()->isRanked() ?? false;
-
-        // dc prevent logic if enabled or in a ranked scene
-        $settings = $swimPlayer->getSettings();
-        if ($isRanked || ($settings?->dcPreventOn())) {
-          if (((microtime(true) * 1000) - ($swimPlayer->getAntiCheatData()->getData(AcData::LAST_CLICK_TIME) ?? 0)) < $this->threshold) {
-            $event->cancel(); // block the swing
-          } else {
-            $swimPlayer->getAntiCheatData()->setData(AcData::LAST_CLICK_TIME, microtime(true) * 1000);
-          }
-        }
-
-        // if dc prevent didn't cancel the click then we can call it
-        if (!$event->isCancelled()) {
-          $ch->click();
-        }
-
-        // only does this notification in ranked marked scenes
-        if ($isRanked && $ch->getCPS() > ClickHandler::CPS_MAX) {
-          $msg = TF::RED . "Clicked above " . TF::YELLOW . ClickHandler::CPS_MAX . TF::RED . " CPS" . self::$spacer . TF::YELLOW . "Attacks will deal Less KB";
-          $swimPlayer->sendActionBarMessage($msg);
-        }
-      }
-    }
-  }
-
-  /* Region and cross server query stuff is not in SwimCore public release, but leaving this commented out to show how to do this in a psuedo way.
   public function onQueryRegenerate(QueryRegenerateEvent $ev)
   {
-    if (!$this->core->getRegionInfo()->isHub) return;
-    $count = $this->core->getRegionPlayerCounts()->getTotalPlayerCount() + count($this->core->getServer()->getOnlinePlayers());
+    if (!$this->core->getRegionInfo()->isHub()) return;
+    $total = 0;
+    foreach ($this->core->getCommunicator()->getAllRegionPlayers() as $regionPlayers) {
+      if (isset($regionPlayers)) {
+        $total += count($regionPlayers);
+      }
+    }
+    $count = $total + count($this->core->getServer()->getOnlinePlayers());
     $ev->getQueryInfo()->setPlayerCount($count);
     $ev->getQueryInfo()->setMaxPlayerCount($count + 1);
   }
-  */
 
 }

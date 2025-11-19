@@ -75,7 +75,7 @@ class Invites extends Component
       $this->duelInvites[$senderName] = ['mode' => $mode, 'map' => $map];
       $name = $sender->getNicks()->getNick();
       $sender->sendMessage(TextFormat::GREEN . "Sent " . $this->swimPlayer->getNicks()->getNick() . " a " . $mode . " duel request on map " . $map);
-      $msg = TextFormat::GREEN . $name . TextFormat::YELLOW . " has sent you a " . TextFormat::AQUA . $mode . TextFormat::YELLOW . " duel request on map: " . TextFormat::GREEN . ucfirst($map);
+      $msg = TextFormat::GREEN . $name . TextFormat::YELLOW . " has sent you a " . TextFormat::AQUA . ucfirst($mode) . TextFormat::YELLOW . " duel request on map: " . TextFormat::GREEN . ucfirst($map);
       $this->swimPlayer->sendMessage($msg);
       ServerSounds::playSoundToPlayer($this->swimPlayer, "mob.chicken.plop", 2, 1);
     }

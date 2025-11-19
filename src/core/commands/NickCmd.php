@@ -2,6 +2,7 @@
 
 namespace core\commands;
 
+use core\commands\cosmetic\CosmeticsCommand;
 use core\scenes\hub\Hub;
 use core\SwimCore;
 use core\systems\player\components\Rank;
@@ -69,6 +70,12 @@ class NickCmd extends Command
                   $sender->sendMessage(TextFormat::RED . "You can not nick as another player on the server");
                   return false;
                 }
+              }
+
+              // check racism (lol)
+              if (CosmeticsCommand::checkInappropriateCosmetic($lower)) {
+                $sender->sendMessage(TextFormat::RED . "You can not nick as this");
+                return false;
               }
 
               // set name tag

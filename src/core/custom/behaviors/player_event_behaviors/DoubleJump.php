@@ -79,7 +79,7 @@ class DoubleJump extends EventBehaviorComponent
     $motionY = $this->swimPlayer->getJumpVelocity() * $this->yVelocity;
 
     // Set the player's motion
-    $this->swimPlayer->setMotion(new Vector3($motionX, $motionY, $motionZ));
+    $this->swimPlayer->setMotion(new Vector3($motionX, $motionY, $motionZ), true);
 
     // Make them unable to jump again, will be reset on next jump input and if on the ground
     $this->canJumpAgain = false;

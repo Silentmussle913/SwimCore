@@ -15,6 +15,8 @@ class ServerSounds
   // Plays sound to a player
   public static function playSoundToPlayer(Player $player, string $soundName, float $volume = 0, float $pitch = 0): void
   {
+    if (!$player->isConnected()) return;
+
     $packet = new PlaySoundPacket();
     $packet->soundName = $soundName;
     $packet->x = $player->getPosition()->getX();

@@ -7,12 +7,16 @@ use core\systems\entity\EntitySystem;
 use core\systems\party\PartiesSystem;
 use core\systems\player\PlayerSystem;
 use core\systems\player\SwimPlayer;
+use core\systems\scene\managers\BlocksManager;
+use core\systems\scene\managers\JoinRequestManager;
 use core\systems\scene\managers\TeamManager;
 use core\systems\scene\misc\Team;
+use core\systems\scene\replay\SceneRecorder;
 use core\systems\SystemManager;
-use core\utils\BehaviorEventEnums;
+use core\utils\BehaviorEventEnum;
 use core\utils\ServerSounds;
 use pocketmine\entity\Entity;
+use pocketmine\entity\object\ItemEntity;
 use pocketmine\event\block\BlockBreakEvent;
 use pocketmine\event\block\BlockPlaceEvent;
 use pocketmine\event\entity\EntityDamageByChildEntityEvent;
@@ -51,9 +55,10 @@ abstract class Scene
   protected PartiesSystem $partiesSystem;
   protected SceneSystem $sceneSystem;
   protected EntitySystem $entitySystem;
+  protected JoinRequestManager $joinRequestManager;
 
   /**
-   * @var BehaviorEventEnums[] Array of events
+   * @var BehaviorEventEnum[] Array of events
    */
   private array $canceledEvents = [];
 
@@ -63,6 +68,8 @@ abstract class Scene
   protected array $players = []; // all swim players unsorted
 
   protected TeamManager $teamManager;
+
+  protected ?BlocksManager $blocksManager = null; // nullable as not every scene supplies a world for a blocks manager to be made, this is scuffed
 
   protected string $sceneName;
   private int $sceneCreationTimestamp; // the unix timestamp of when the scene is created, used for calculating tick age
@@ -75,11 +82,14 @@ abstract class Scene
 
   protected bool $canCraft = false;
 
+  protected SceneRecorder $recorder;
+
   public function __construct(SwimCore $core, string $name)
   {
     $this->core = $core;
     $this->sceneName = $name;
     $this->sceneCreationTimestamp = time();
+    $this->joinRequestManager = new JoinRequestManager($this);
 
     // add in the systems a scene might need to touch
     $this->systemManager = $this->core->getSystemManager();
@@ -92,6 +102,24 @@ abstract class Scene
 
     // make team manager
     $this->teamManager = new TeamManager($this);
+
+    $this->recorder = new SceneRecorder();
+
+    if (isset($this->world)) {
+      $this->blocksManager = new BlocksManager($this, $core, $this->world);
+    } else {
+      echo("WORLD IS NULL, NO BLOCKS MANAGER MADE ON CONSTRUCT: $this->sceneName \n");
+    }
+  }
+
+  public function getJoinRequestManager(): JoinRequestManager
+  {
+    return $this->joinRequestManager;
+  }
+
+  public function getSceneRecorder(): SceneRecorder
+  {
+    return $this->recorder;
   }
 
   /**
@@ -135,6 +163,9 @@ abstract class Scene
   public final function setWorld(World $world): void
   {
     $this->world = $world;
+    if (!isset($this->blocksManager)) {
+      $this->blocksManager = new BlocksManager($this, $this->core, $this->world);
+    }
   }
 
   public final function getWorld(): World
@@ -161,7 +192,7 @@ abstract class Scene
   }
 
   // checks if the event in this scene is scheduled to be cancelled, and if it is then it cancels it
-  private function cancelCheck(int $eventEnum, Event $event): void
+  private function cancelCheck(BehaviorEventEnum $eventEnum, Event $event): void
   {
     if (!empty($this->canceledEvents)) {
       if (in_array($eventEnum, $this->canceledEvents, true)) {
@@ -200,24 +231,60 @@ abstract class Scene
   // called every second
   public function updateSecond(): void
   {
+    $this->blocksManager?->updateSecond();
   }
+
+  // called once on scene close
 
   /**
    * @throws ReflectionException
    */
   public function exit(): void
   {
-    // Clean up any actor entities in the world that this scene had ownership of.
-    // We would probably also want to do this with dropped items...
+    $this->blocksManager?->cleanMap();
+
+    // We want to cache a position to use to check for nearby item entities to kill.
+    // This is a TOTAL HACK of a solution for using to clean up nearby item entities probably in the scene. (see [1]).
+    // It would be better to have a midpoint or some map position provided to us from a derived class like Scene or PvP.
+    $pos = null;
+
+    // [0]
+    // We will make sure all entities are totally destroyed (duel does this in end() but that might not always be called)
     foreach ($this->entitySystem->entities as $actorEntity) {
       $s = $actorEntity?->getParentScene();
       if ($s === $this || $s === null) {
         if (SwimCore::$DEBUG) {
           echo("Scene::exit() | Cleaning up actor entity: {$actorEntity->getId()}\n");
         }
+        $pos = $actorEntity?->getPosition();
         $this->entitySystem->deregisterEntity($actorEntity);
       }
     }
+
+    // [1]
+    // While the derived PVP scene will call dropped item manager to clean stuff up,
+    // that won't always work since not every scene uses that manager for item entity storage.
+    // We will do a hack fix to clean up all dropped items within our cached position.
+    if (isset($this->world) && isset($pos)) {
+      foreach ($this->world->getEntities() as $itemEntity) {
+        if ($itemEntity instanceof ItemEntity) {
+          if ($itemEntity->getPosition()->distance($pos) < 100) {
+            if (SwimCore::$DEBUG) {
+              echo("Scene::exit() | Cleaning up item entity: {$itemEntity->getId()}\n");
+            }
+            $itemEntity->kill();
+            $itemEntity->flagForDespawn();
+          }
+        }
+      }
+    } else if (SwimCore::$DEBUG) {
+      // This can happen pretty easily actually, not good.
+      // It's not the end of the world if this happens because ideally those chunks will unload and de-spawn all item entities.
+      echo("Scene::exit() | No world or actor pos found, so could not clean up world dropped items in {$this->sceneName}\n");
+    }
+
+    // [2]
+    // We will then force unload all chunks possible (do we want to do this? I won't do this yet, pocketmine should do this)
   }
 
   // handling for when a player needs to restart in a scene individually (rekit, warp back to a spawn point, etc)
@@ -225,6 +292,11 @@ abstract class Scene
   public function restart(SwimPlayer $swimPlayer): void
   {
     // no op default
+  }
+
+  public final function getBlockManager(): ?BlocksManager
+  {
+    return $this->blocksManager ?? null;
   }
 
   public final function getSceneName(): string
@@ -353,114 +425,118 @@ abstract class Scene
 
   public function sceneEntityDamageByChildEntityEvent(EntityDamageByChildEntityEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::ENTITY_DAMAGE_BY_CHILD_ENTITY_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::ENTITY_DAMAGE_BY_CHILD_ENTITY_EVENT, $event);
   }
 
   public function sceneEntityDamageByEntityEvent(EntityDamageByEntityEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::ENTITY_DAMAGE_BY_ENTITY_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::ENTITY_DAMAGE_BY_ENTITY_EVENT, $event);
   }
 
   public function sceneEntityDamageEvent(EntityDamageEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::ENTITY_DAMAGE_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::ENTITY_DAMAGE_EVENT, $event);
   }
 
   public function sceneItemDropEvent(PlayerDropItemEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::PLAYER_DROP_ITEM_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::PLAYER_DROP_ITEM_EVENT, $event);
   }
 
   public function sceneItemUseEvent(PlayerItemUseEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::PLAYER_ITEM_USE_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::PLAYER_ITEM_USE_EVENT, $event);
   }
 
   public function sceneInventoryUseEvent(InventoryTransactionEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::INVENTORY_TRANSACTION_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::INVENTORY_TRANSACTION_EVENT, $event);
   }
 
   public function sceneEntityTeleportEvent(EntityTeleportEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::ENTITY_TELEPORT_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::ENTITY_TELEPORT_EVENT, $event);
   }
 
   public function scenePlayerConsumeEvent(PlayerItemConsumeEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::PLAYER_ITEM_CONSUME_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::PLAYER_ITEM_CONSUME_EVENT, $event);
   }
 
   public function scenePlayerPickupItem(EntityItemPickupEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::ENTITY_ITEM_PICKUP_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::ENTITY_ITEM_PICKUP_EVENT, $event);
   }
 
   public function sceneProjectileLaunchEvent(ProjectileLaunchEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::PROJECTILE_LAUNCH_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::PROJECTILE_LAUNCH_EVENT, $event);
   }
 
   public function sceneEntityRegainHealthEvent(EntityRegainHealthEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::ENTITY_REGAIN_HEALTH_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::ENTITY_REGAIN_HEALTH_EVENT, $event);
   }
 
   public function sceneProjectileHitEvent(ProjectileHitEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::PROJECTILE_HIT_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::PROJECTILE_HIT_EVENT, $event);
   }
 
   public function sceneProjectileHitEntityEvent(ProjectileHitEntityEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::PROJECTILE_HIT_ENTITY_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::PROJECTILE_HIT_ENTITY_EVENT, $event);
   }
 
   // not called back normally for performance reasons, only called back for chest opening at the moment
   public function scenePlayerInteractEvent(PlayerInteractEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::PLAYER_INTERACT_EVENT, $event);
-  }
-
-  public function sceneBlockPlaceEvent(BlockPlaceEvent $event, SwimPlayer $swimPlayer): void
-  {
-    $this->cancelCheck(BehaviorEventEnums::BLOCK_PLACE_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::PLAYER_INTERACT_EVENT, $event);
   }
 
   public function sceneBlockBreakEvent(BlockBreakEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::BLOCK_BREAK_EVENT, $event);
+    $this->blocksManager?->handleBlockBreak($event);
+  }
+
+  public function sceneBlockPlaceEvent(BlockPlaceEvent $event, SwimPlayer $swimPlayer): void
+  {
+    $this->blocksManager?->handleBlockPlace($event);
   }
 
   public function scenePlayerSpawnChildEvent(EntitySpawnEvent $event, SwimPlayer $swimPlayer, Entity $spawnedEntity): void
   {
-    $this->cancelCheck(BehaviorEventEnums::ENTITY_SPAWN_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::ENTITY_SPAWN_EVENT, $event);
   }
 
   public function scenePlayerToggleFlightEvent(PlayerToggleFlightEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::PLAYER_TOGGLE_FLIGHT_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::PLAYER_TOGGLE_FLIGHT_EVENT, $event);
   }
 
   public function scenePlayerJumpEvent(PlayerJumpEvent $event, SwimPlayer $swimPlayer): void
   {
-    $this->cancelCheck(BehaviorEventEnums::PLAYER_JUMP_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::PLAYER_JUMP_EVENT, $event);
   }
 
   // this event can not be cancelled and should not be cancelled, so we don't allow it being registered and checked to be cancelled
   public function sceneDataPacketReceiveEvent(DataPacketReceiveEvent $event, SwimPlayer $swimPlayer): void
   {
     // optional override (like the rest, just not cancel checked)
+    // this is where recording happens for all player movements and actions
+    if ($this->recorder->isRecording()) {
+      $this->recorder->onReceive($event, $swimPlayer);
+    }
   }
 
   public function sceneBucketEmptyEvent(PlayerBucketEmptyEvent $event, SwimPlayer $sp): void
   {
-    $this->cancelCheck(BehaviorEventEnums::BUCKET_EMPTY_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::BUCKET_EMPTY_EVENT, $event);
   }
 
   public function sceneBucketFillEvent(PlayerBucketFillEvent $event, SwimPlayer $sp): void
   {
-    $this->cancelCheck(BehaviorEventEnums::BUCKET_FILL_EVENT, $event);
+    $this->cancelCheck(BehaviorEventEnum::BUCKET_FILL_EVENT, $event);
   }
 
   public function isFFA(): bool

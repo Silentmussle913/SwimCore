@@ -7,12 +7,14 @@ use core\SwimCore;
 use core\systems\map\MapInfo;
 use core\systems\player\components\ClickHandler;
 use core\systems\player\SwimPlayer;
+use core\systems\scene\DuelInfo;
 use core\systems\scene\misc\Team;
 use core\utils\AcData;
 use core\utils\CoolAnimations;
 use core\utils\PositionHelper;
 use core\utils\ServerSounds;
 use core\utils\TimeHelper;
+use DateTime;
 use jackmd\scorefactory\ScoreFactory;
 use jackmd\scorefactory\ScoreFactoryException;
 use JetBrains\PhpStorm\ArrayShape;
@@ -26,12 +28,17 @@ use pocketmine\player\GameMode;
 use pocketmine\Server;
 use pocketmine\utils\TextFormat;
 use pocketmine\world\World;
+use ReflectionException;
 
 abstract class Duel extends PvP
 {
 
-  // only nodebuff boxing and midfight are included in swimcore public
-  public static array $MODES = ['nodebuff', 'boxing', 'midfight', 'bedfight', 'fireball fight', 'bridge', 'battlerush', 'skywars', 'buhc'];
+  /** @var array<string, DuelInfo> */
+  public static array $MODES = array(); // now serialized in Queue::init() and cloned into here to be accessed easily globally with no mutations on Queue
+
+  public static array $RANKED = ['skywars', 'bedfight'];
+
+  protected string $modeName;
 
   private int $secondsFinished = 0;
   protected int $seconds;
@@ -48,15 +55,17 @@ abstract class Duel extends PvP
   protected bool $messageCountDown;
   protected bool $updateScoreTagEachSecond;
   protected bool $updateScoreBoardEachSecond;
+  protected bool $alwaysAllowSpecs = false;
 
   /**
    * @var SwimPlayer[]
    */
   protected array $losers; // everyone in the scene who got final killed
 
-  public function __construct(SwimCore $core, string $name, World $world)
+  public function __construct(SwimCore $core, string $name, World $world, string $modeName)
   {
     $this->world = $world;
+    $this->modeName = $modeName;
     parent::__construct($core, $name);
     $this->seconds = 0;
     $this->duelCountDownTime = 5;
@@ -86,6 +95,11 @@ abstract class Duel extends PvP
     return $this->finished;
   }
 
+  public function alwaysAllowSpectators(): bool
+  {
+    return $this->alwaysAllowSpecs;
+  }
+
   public function getNonSpecsPlayerCount(): int
   {
     $count = 0;
@@ -109,7 +123,7 @@ abstract class Duel extends PvP
   }
 
   // add in player team positions before doing this!
-  public final function warpPlayersIn(): void
+  public final function warpPlayersIn(bool $lookAt = true): void
   {
     $teams = $this->teamManager->getTeams();
     foreach ($teams as $team) {
@@ -153,7 +167,7 @@ abstract class Duel extends PvP
       }
     }
 
-    $this->teamManager->lookAtEachOther();
+    if ($lookAt) $this->teamManager->lookAtEachOther();
   }
 
   public function sceneEntityDamageByEntityEvent(EntityDamageByEntityEvent $event, SwimPlayer $swimPlayer): void
@@ -182,7 +196,7 @@ abstract class Duel extends PvP
 
       // different KB per input mode
       $inputMode = $swimPlayer->getAntiCheatData()?->getData(AcData::INPUT_MODE);
-      $controller = $inputMode == InputMode::GAME_PAD || $inputMode == InputMode::MOTION_CONTROLLER;
+      $controller = $inputMode == InputMode::GAME_PAD || $inputMode == 4; // InputMode::MOTION_CONTROLLER
       if ($controller) {
         $vKB = $this->controllerVertKB;
         $kb = $this->controllerKB;
@@ -203,8 +217,7 @@ abstract class Duel extends PvP
       $this->playerHit($attacker, $swimPlayer, $event);
 
       // update who last hit them
-      // $swimPlayer->getCombatLogger()->setlastHitBy($attacker);
-      $attacker->getCombatLogger()->handleAttack($swimPlayer); // this seems a lot better
+      $attacker->getCombatLogger()?->handleAttack($swimPlayer);
 
       // Death logic
       if ($event->getFinalDamage() >= $swimPlayer->getHealth()) {
@@ -222,19 +235,13 @@ abstract class Duel extends PvP
   // attempts to get the last hit by via combat logger
   protected function playerDiedToMiscDamage(EntityDamageEvent $event, SwimPlayer $swimPlayer): void
   {
-    $lastHitBy = $swimPlayer->getCombatLogger()->getLastHitBy();
+    $lastHitBy = $swimPlayer->getCombatLogger()?->getLastHitBy();
     if (isset($lastHitBy)) {
       $this->defaultDeathHandle($lastHitBy, $swimPlayer);
     } else {
       // no hitter logged then have to just kill and eliminate instantly
       $this->playerFinalKilled($swimPlayer);
     }
-  }
-
-  protected function hitByProjectile(SwimPlayer $hitPlayer, SwimPlayer $hitter, Entity $projectile, EntityDamageByChildEntityEvent $event): void
-  {
-    parent::hitByProjectile($hitPlayer, $hitter, $projectile, $event);
-    $hitPlayer->getCombatLogger()?->setLastHitBy($hitter);
   }
 
   // you should override this for games that have respawn enabled and handle accordingly
@@ -435,7 +442,7 @@ abstract class Duel extends PvP
   }
 
   /**
-   * @throws ScoreFactoryException
+   * @throws ScoreFactoryException|ReflectionException
    */
   public function updateSecond(): void
   {
@@ -455,6 +462,8 @@ abstract class Duel extends PvP
 
     // updates all players scoreboards and score tags each second
     foreach ($this->players as $player) {
+      if (!$player->isConnected()) continue; // safety to fix a super rare crash
+
       if ($this->updateScoreBoardEachSecond) $this->duelScoreboard($player);
       if ($this->updateScoreTagEachSecond) $this->duelScoreTag($player);
 
@@ -472,7 +481,7 @@ abstract class Duel extends PvP
   }
 
   /**
-   * @throws ScoreFactoryException
+   * @throws ScoreFactoryException|ReflectionException
    * @brief sends all back to hub and deletes the scene
    */
   private function end(): void
@@ -485,12 +494,12 @@ abstract class Duel extends PvP
   {
     if ($this->seconds <= $this->duelCountDownTime) {
       if ($this->messageCountDown) {
-        $swimPlayer->sendMessage(TextFormat::GREEN . "Duel starting in " . TextFormat::YELLOW . ($this->duelCountDownTime + 1) - $this->seconds);
+        $swimPlayer->sendMessage(TextFormat::GRAY . "Starting in " . TextFormat::YELLOW . ($this->duelCountDownTime + 1) - $this->seconds);
       }
       ServerSounds::playSoundToPlayer($swimPlayer, "random.click", 2, 1);
       return false;
     } else {
-      $swimPlayer->sendMessage(TextFormat::GREEN . "Duel Started!");
+      $swimPlayer->sendMessage(TextFormat::GREEN . "GO!"); // IDK if I like this
       ServerSounds::playSoundToPlayer($swimPlayer, "random.orb", 2, 1);
       return true;
     }
@@ -512,7 +521,18 @@ abstract class Duel extends PvP
   // called when duel starts
   protected function duelStart(): void
   {
-    // optional override
+    if (SwimCore::$REPLAYER) { // replayer variable is temporary
+      $datetime = new DateTime('now');
+      $date = $datetime->format("g:i A n/j/Y");
+      $replayName = $this->sceneName . " | $date";
+      $pos = $this->map->getSpawnPos1(); // we always use spawnPos1 as the origin point
+      $this->recorder->startRecording($replayName, $this->modeName, $this->map->getMapName(), $this->world->getFolderName(), $pos);
+    }
+  }
+
+  protected function numStrip(string $input): string
+  {
+    return preg_replace('/\d+$/', '', $input);
   }
 
   abstract protected function applyKit(SwimPlayer $swimPlayer): void;
@@ -608,8 +628,16 @@ abstract class Duel extends PvP
         $this->getPlayerTeam($swimPlayer)?->removePlayer($swimPlayer); // remove from their old team they were playing in
         $this->teamManager->getSpecTeam()->addPlayer($swimPlayer); // adding to spec team will reset the player's inventory and put them in spectator for us
         $winningTeam = $this->getWinningTeam();
+
         if (isset($winningTeam)) {
-          $this->handleWin($winningTeam, $this->teamManager->getFirstOpposingTeam($winningTeam));
+
+          $losingTeam = $this->teamManager->getFirstOpposingTeam($winningTeam);
+          // to avoid an ultra-rare crash we just make an empty team
+          if ($losingTeam === null) {
+            $losingTeam = $this->teamManager->makeTeam(":error1", TextFormat::WHITE);
+          }
+
+          $this->handleWin($winningTeam, $losingTeam);
         }
       }
     }
@@ -633,6 +661,12 @@ abstract class Duel extends PvP
         }
       }
     }
+
+    // to avoid an ultra-rare crash
+    if ($losingTeam === null) {
+      $losingTeam = $this->teamManager->makeTeam(":error2", TextFormat::WHITE);
+    }
+
     // now end for real
     $this->handleWin($winningTeam, $losingTeam);
   }
@@ -657,13 +691,14 @@ abstract class Duel extends PvP
   public function exit(): void
   {
     parent::exit();
+    if ($this->recorder->isRecording()) $this->recorder->stopRecording();
     $this->map->setActive(false);
   }
 
   /**
    * @throws ScoreFactoryException
    */
-  private function sendToHub(): void
+  protected function sendToHub(): void
   {
     foreach ($this->players as $player) {
       $sh = $player->getSceneHelper();
@@ -677,6 +712,7 @@ abstract class Duel extends PvP
   }
 
   // specific things that need to happen when the duel ends, passes the winning team swim player array as an argument
+  // TODO: losers team is sometimes an empty error team if no loser was found, and the way most duel over methods are implemented doesn't account for this properly
   abstract protected function duelOver(Team $winners, Team $losers): void;
 
   /**

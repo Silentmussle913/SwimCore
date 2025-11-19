@@ -6,7 +6,7 @@ use core\communicator\Communicator;
 
 class DiscordInfoPacket extends Packet
 {
-  public const NETWORK_ID = PacketId::DISCORD_INFO;
+  public const  NETWORK_ID = PacketId::DISCORD_INFO;
 
   public string $boosterRole;
   public string $youtubeRole;

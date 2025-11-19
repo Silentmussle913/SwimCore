@@ -1,6 +1,6 @@
 <?php
 
-namespace core\commands\Unpunish;
+namespace core\commands\unpunish;
 
 use core\database\SwimDB;
 use core\SwimCore;
@@ -78,6 +78,11 @@ class UnPunishCmd extends BaseCommand
     if ($player instanceof SwimPlayer && $player->isOnline()) {
       $player->getChatHandler()->unMute();
     }
+  }
+
+  public function getPermission(): ?string
+  {
+    return "use.staff";
   }
 
 }

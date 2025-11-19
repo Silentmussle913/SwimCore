@@ -3,7 +3,10 @@
 namespace core\systems\scene\managers;
 
 use core\SwimCore;
+use core\systems\player\SwimPlayer;
 use core\systems\scene\misc\BlockTicker;
+use core\systems\scene\replay\SceneRecorder;
+use core\systems\scene\Scene;
 use core\utils\PositionHelper;
 use core\utils\TimeHelper;
 use pocketmine\block\Block;
@@ -24,9 +27,9 @@ class BlocksManager
   // int vectorHash => [self::BLOCK => Block $block, int self::TIME => $time, Vector3 self::POSITION => $vec]
 
   /* Deprecated key const look up values for the old array structure
-    public const int TIME = 0;
-    public const int BLOCK = 1;
-    public const int POSITION = 2;
+    public const TIME = 0;
+    public const BLOCK = 1;
+    public const POSITION = 2;
   */
 
   /**
@@ -51,6 +54,8 @@ class BlocksManager
   private bool $canBreakRegisteredBlocks; // if we can break blocks registered in our allow list, this override can break map blocks
   private bool $canBreakMapBlocks; // also applies to breaking pre-made map blocks
   private bool $prunes; // if replaces broken and placed blocks
+  private bool $pruneReplaceBrokenBlocks = true; // if broken map blocks should be replaced during pruning
+  private bool $pruneRemovePlacedBlocks = true; // if placed blocks should be removed during pruning
 
   private World $world; // so server knows what world to place blocks back in during clean up
 
@@ -59,6 +64,8 @@ class BlocksManager
 
   private SwimCore $core;
   private Server $server;
+  private Scene $parentScene;
+  private SceneRecorder $recorder;
 
   /**
    * key is Vector3
@@ -66,8 +73,11 @@ class BlocksManager
    */
   private array $chunksToKeepAlive;
 
+  // TODO: have block ticker positions be saved in the replay to be used there as well in its own blocks manager
+
   public function __construct
   (
+    Scene    $parentScene,
     SwimCore $core,
     World    $world,
     bool     $canPlaceBlocks = false,
@@ -76,6 +86,7 @@ class BlocksManager
     bool     $prune = false
   )
   {
+    $this->parentScene = $parentScene;
     $this->core = $core;
     $this->server = $this->core->getServer();
     $this->world = $world;
@@ -88,6 +99,8 @@ class BlocksManager
     $this->canBreakMapBlocks = $canBreakMapBlocks;
     $this->canBreakRegisteredBlocks = $canBreakMapBlocks;
     $this->prunes = $prune;
+
+    $this->recorder = $this->parentScene->getSceneRecorder();
 
     // how long in ticks for a block to be replaced back to what it was, by default is 5 minutes
     $this->brokenLifeTime = TimeHelper::minutesToTicks(5);
@@ -123,6 +136,16 @@ class BlocksManager
   public function setPrunes(bool $prunes = true): void
   {
     $this->prunes = $prunes;
+  }
+
+  public function setPruneReplaceBrokenBlocks(bool $prunes = true): void
+  {
+    $this->pruneReplaceBrokenBlocks = $prunes;
+  }
+
+  public function setPruneRemovePlacedBlocks(bool $prunes = true): void
+  {
+    $this->pruneRemovePlacedBlocks = $prunes;
   }
 
   /**
@@ -173,21 +196,32 @@ class BlocksManager
    * @param array $array The array to add to.
    * @param BlockEntry $entry The entry to add to the array.
    */
-  private function addBlockEntryToArrayWithVector3Key(array &$array, BlockEntry $entry): void
+  public function addBlockEntryToArrayWithVector3Key(array &$array, BlockEntry $entry): void
   {
     $key = PositionHelper::getVectorHashKey($entry->position);
     $entry->key = $key;
     $array[$key] = $entry;
+
+    // we need to record placed blocks and broken map blocks depending on the array we are modifying, this is a bit of a hack
+    if ($this->recorder->isRecording()) {
+      if ($array === $this->placedBlocks) {
+        $this->recorder->onBlockAdd($entry->block, $entry->position);
+      } elseif ($array === $this->brokenMapBlocks) {
+        $this->recorder->onBlockRemove($entry->block, $entry->position);
+      }
+    }
   }
 
   public function handleBlockPlace(BlockPlaceEvent $event): void
   {
+    $id = $event->getPlayer()->getId();
     $time = $this->core->getServer()->getTick() + $this->placedLifeTime;
     if ($this->canPlaceBlocks) {
       foreach ($event->getTransaction()->getBlocks() as [$x, $y, $z, $block]) {
         $vec = new Vector3($x, $y, $z);
         $entry = new BlockEntry($vec, $block, $time);
         $this->addBlockEntryToArrayWithVector3Key($this->placedBlocks, $entry);
+        $entry->ownerEntity = $id;
       }
     } else {
       // how would you have blocks to place if the duel has block placements disabled?
@@ -197,12 +231,12 @@ class BlocksManager
 
   public function handleBlockBreak(BlockBreakEvent $event): void
   {
-    $allowed = $this->handleBlockBreakOnBlock($event->getBlock());
+    $allowed = $this->handleBlockBreakOnBlock($event->getBlock(), $event->getPlayer()->getId());
     if (!$allowed) $event->cancel();
   }
 
   // returns if the block was allowed to be broken
-  public function handleBlockBreakOnBlock(Block $block): bool
+  public function handleBlockBreakOnBlock(Block $block, int $ownerID = -1): bool
   {
     // first check if we are allowed to break blocks, if not then cancel and return
     if (!$this->canBreakBlocks) {
@@ -226,19 +260,23 @@ class BlocksManager
         $entry = new BlockEntry($position, $block, $time);
         if (SwimCore::$DEBUG) {
           $str = PositionHelper::toString($position);
-          echo("$str broken map block, OK!\n");
+          echo("$str {$block->getName()} broken map block, OK!\n");
         }
         $this->addBlockEntryToArrayWithVector3Key($this->brokenMapBlocks, $entry);
+        $entry->ownerEntity = $ownerID;
         return true;
       }
     }
 
+    // record it no matter what if we end up getting here
+    if ($this->recorder->isRecording()) $this->recorder->onBlockRemove($block, $position);
+
     if (SwimCore::$DEBUG) {
       $str = PositionHelper::toString($position);
       if (!$inPlacedBlocks) {
-        echo("$str attempting breaking block but not in placed blocks, CANCEL!\n");
+        echo("$str {$block->getName()} attempting breaking block but not in placed blocks, CANCEL!\n");
       } else {
-        echo("$str breaking placed block, OK!\n");
+        echo("$str {$block->getName()} breaking placed block, OK!\n");
       }
     }
 
@@ -311,6 +349,37 @@ class BlocksManager
     $this->clearPlacedBlocks();
     $this->replaceBrokenMapBlocks();
     $this->clearChunkLoaders();
+  }
+
+  public function resetBlocksFromPlayer(SwimPlayer $player, bool $doBroken, bool $doPlaced): void
+  {
+    $id = $player->getId();
+
+    if ($doBroken) {
+      foreach ($this->brokenMapBlocks as $key => $data) {
+        // have to check if terrain is loaded, this might not be nice on performance
+        if ($data->ownerEntity == $id) {
+          if ($this->world->isInLoadedTerrain($data->position)) {
+            $this->world->setBlock($data->position, $data->block);
+            // remove this entry from broken map blocks
+            unset($this->brokenMapBlocks[$key]);
+          }
+        }
+      }
+    }
+
+    if ($doPlaced) {
+      foreach ($this->placedBlocks as $key => $data) {
+        // have to check if terrain is loaded, this might not be nice on performance
+        if ($data->ownerEntity == $id) {
+          if ($this->world->isInLoadedTerrain($data->position)) {
+            $this->world->setBlock($data->position, VanillaBlocks::AIR());
+            // remove this entry from placed map blocks
+            unset($this->placedBlocks[$key]);
+          }
+        }
+      }
+    }
   }
 
   // Getter for canPlaceBlocks
@@ -417,26 +486,40 @@ class BlocksManager
     $time = $this->server->getTick();
 
     // set back the placed blocks to air
-    foreach ($this->placedBlocks as $key => $data) {
-      if ($time >= $data->time) {
-        // if ($this->world->isInLoadedTerrain($pos))
+    if ($this->pruneRemovePlacedBlocks) {
+      foreach ($this->placedBlocks as $key => $data) {
+        if ($time >= $data->time) {
+          // if ($this->world->isInLoadedTerrain($pos))
 
-        $this->world->setBlock($data->position, VanillaBlocks::AIR());
+          if ($this->recorder->isRecording()) {
+            // store the block before it was removed for timeline scrubbing in replay mode
+            $this->recorder->onBlockRemove($data->block, $data->position);
+          }
 
-        // if (SwimCore::$DEBUG) echo "Removing placed block: " . $block->getName() . "\n";
-        unset($this->placedBlocks[$key]);
+          $this->world->setBlock($data->position, VanillaBlocks::AIR());
+
+          // if (SwimCore::$DEBUG) echo "Removing placed block: " . $block->getName() . "\n";
+          unset($this->placedBlocks[$key]);
+        }
       }
     }
 
     // set back the broken map blocks to what they were
-    foreach ($this->brokenMapBlocks as $key => $data) {
-      if ($time >= $data->time) {
-        // if ($this->world->isInLoadedTerrain($pos))
+    if ($this->pruneReplaceBrokenBlocks) {
+      foreach ($this->brokenMapBlocks as $key => $data) {
+        if ($time >= $data->time) {
+          // if ($this->world->isInLoadedTerrain($pos))
 
-        $this->world->setBlock($data->position, $data->block);
+          if ($this->recorder->isRecording()) {
+            // store the block before it was removed for timeline scrubbing in replay mode
+            $this->recorder->onBlockRemove($data->block, $data->position);
+          }
 
-        // if (SwimCore::$DEBUG) echo "Replacing map block: " . $block->getName() . "\n";
-        unset($this->brokenMapBlocks[$key]);
+          $this->world->setBlock($data->position, $data->block);
+
+          // if (SwimCore::$DEBUG) echo "Replacing map block: " . $block->getName() . "\n";
+          unset($this->brokenMapBlocks[$key]);
+        }
       }
     }
   }
@@ -448,6 +531,9 @@ class BlocksManager
     $ticker = new BlockTicker($this->world, $position, $tick);
     $ticker->enableChunkTicker($tick);
     $this->chunksToKeepAlive[$key] = $ticker;
+
+    // recorded scenes need to have the same chunk loaders
+    if ($this->recorder->isRecording()) $this->recorder->addChunkLoader($position);
   }
 
   // returns they key of the hash key of the position passed in
@@ -479,6 +565,11 @@ class BlocksManager
   public function &getPlacedBlocksRef(): array
   {
     return $this->placedBlocks;
+  }
+
+  public function &getBrokenBlocksRef(): array
+  {
+    return $this->brokenMapBlocks;
   }
 
   /**

@@ -1,12 +1,12 @@
 <?php
 
-namespace core\Utils;
+namespace core\utils;
 
 use pocketmine\block\Block;
 use pocketmine\math\AxisAlignedBB;
 use pocketmine\math\Vector3;
 
-// Taken directly from Esoteric, credit to Ethan (we did add some stuff though and refactor it a lot)
+// Forked from Esoteric, credit to Ethan (we did add some stuff though and refactor it a bit)
 class AABB
 {
 
@@ -16,6 +16,7 @@ class AABB
   private float $maxZ;
   private float $maxY;
   private float $maxX;
+
   private Vector3 $maxVector;
   private Vector3 $minVector;
 
@@ -30,13 +31,6 @@ class AABB
     $this->minVector = new Vector3($this->minX, $this->minY, $this->minZ);
     $this->maxVector = new Vector3($this->maxX, $this->maxY, $this->maxZ);
   }
-
-  /*
-  public static function from(PlayerData $data) : self{
-    $pos = $data->currentLocation;
-    return new AABB($pos->x - $data->hitboxWidth, $pos->y, $pos->z - $data->hitboxWidth, $pos->x + $data->hitboxWidth, $pos->y + $data->hitboxHeight, $pos->z + $data->hitboxWidth);
-  }
-  */
 
   public static function fromAxisAlignedBB(AxisAlignedBB $alignedBB): AABB
   {
@@ -103,39 +97,29 @@ class AABB
     ];
   }
 
-  public function distanceFromVector(Vector3 $vector) : float{
-    $distX = max($this->minX - $vector->x, max(0, $vector->x - $this->maxX));
-    $distY = max($this->minY - $vector->y, max(0, $vector->y - $this->maxY));
-    $distZ = max($this->minZ - $vector->z, max(0, $vector->z - $this->maxZ));
+  public function distanceFromVector(Vector3 $vector): float
+  {
+    $distX = max($this->minX - $vector->x, 0, $vector->x - $this->maxX);
+    $distY = max($this->minY - $vector->y, 0, $vector->y - $this->maxY);
+    $distZ = max($this->minZ - $vector->z, 0, $vector->z - $this->maxZ);
     return sqrt(($distX ** 2) + ($distY ** 2) + ($distZ ** 2));
   }
 
-  public function closestPoint(Vector3 $origin) : Vector3{
+  public function closestPoint(Vector3 $origin): Vector3
+  {
     $shortest = Vector3::zero();
 
     if ($origin->x < $this->minX) {
       $shortest->x = $this->minX;
-    } else if ($origin->x > $this->maxX) {
-      $shortest->x = $this->maxX;
-    } else {
-      $shortest->x = $origin->x;
-    }
+    } else $shortest->x = min($origin->x, $this->maxX);
 
     if ($origin->y < $this->minY) {
       $shortest->y = $this->minY;
-    } else if ($origin->y > $this->maxY) {
-      $shortest->y = $this->maxY;
-    } else {
-      $shortest->y = $origin->y;
-    }
+    } else $shortest->y = min($origin->y, $this->maxY);
 
     if ($origin->z < $this->minZ) {
       $shortest->z = $this->minZ;
-    } else if ($origin->z > $this->maxZ) {
-      $shortest->z = $this->maxZ;
-    } else {
-      $shortest->z = $origin->z;
-    }
+    } else $shortest->z = min($origin->z, $this->maxZ);
 
     return $shortest;
   }
@@ -146,6 +130,7 @@ class AABB
   }
   */
 
+  // pocketmine's version
   public function toAABB(): AxisAlignedBB
   {
     return new AxisAlignedBB($this->minX, $this->minY, $this->minZ, $this->maxX, $this->maxY, $this->maxZ);

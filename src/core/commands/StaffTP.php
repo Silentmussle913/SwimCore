@@ -10,7 +10,6 @@ use core\utils\TargetArgument;
 use CortexPE\Commando\BaseCommand;
 use CortexPE\Commando\exception\ArgumentOrderException;
 use jackmd\scorefactory\ScoreFactoryException;
-use JsonException;
 use pocketmine\command\CommandSender;
 use pocketmine\player\GameMode;
 
@@ -44,20 +43,24 @@ class StaffTP extends BaseCommand
   {
     if ($sender instanceof SwimPlayer) {
       if ($sender->getRank()->getRankLevel() >= Rank::MOD_RANK) {
-        $player = $args["player"];
-        $real = $this->core->getServer()->getPlayerExact($player);
+        $real = SeeNick::getPlayerFromNick($args["player"]);
         if (isset($real) && $real->isOnline()) {
           try {
             $this->sceneSystem->setScene($sender, $this->sceneSystem->getScene('GodMode'));
             $sender->setInvisible();
             $sender->setGamemode(GameMode::SPECTATOR);
             $sender->teleport($real->getPosition());
-          } catch (JsonException|ScoreFactoryException $e) {
+          } catch (ScoreFactoryException $e) {
             echo "staff tp error: " . $e->getMessage() . "\n";
           }
         }
       }
     }
+  }
+
+  public function getPermission(): ?string
+  {
+    return "use.staff";
   }
 
 }

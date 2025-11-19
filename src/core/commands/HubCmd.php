@@ -5,7 +5,6 @@ namespace core\commands;
 use core\SwimCore;
 use core\systems\player\SwimPlayer;
 use jackmd\scorefactory\ScoreFactoryException;
-use JsonException;
 use pocketmine\command\Command;
 use pocketmine\command\CommandSender;
 use pocketmine\utils\TextFormat;
@@ -24,7 +23,6 @@ class HubCmd extends Command
 
   /**
    * @throws ScoreFactoryException
-   * @throws JsonException
    */
   public function execute(CommandSender $sender, string $commandLabel, array $args): bool
   {
@@ -59,6 +57,11 @@ class HubCmd extends Command
     }
 
     return true;
+  }
+
+  public function getPermission(): ?string
+  {
+    return "use.all";
   }
 
 }

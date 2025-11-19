@@ -4,7 +4,7 @@ namespace core\scenes\duel;
 
 use core\systems\player\SwimPlayer;
 use core\systems\scene\misc\Team;
-use core\utils\BehaviorEventEnums;
+use core\utils\BehaviorEventEnum;
 use core\utils\InventoryUtil;
 use core\utils\TimeHelper;
 use jackmd\scorefactory\ScoreFactory;
@@ -25,9 +25,9 @@ class Boxing extends Duel
   public function init(): void
   {
     $this->registerCanceledEvents([
-      BehaviorEventEnums::PLAYER_DROP_ITEM_EVENT,
-      BehaviorEventEnums::BLOCK_BREAK_EVENT,
-      BehaviorEventEnums::BLOCK_PLACE_EVENT
+      BehaviorEventEnum::PLAYER_DROP_ITEM_EVENT,
+      BehaviorEventEnum::BLOCK_BREAK_EVENT,
+      BehaviorEventEnum::BLOCK_PLACE_EVENT
     ]);
     $this->kb = 0.404;
     $this->vertKB = 0.404;
@@ -53,6 +53,7 @@ class Boxing extends Duel
     foreach ($this->teamManager->getTeams() as $team) {
       $team->setTargetScore($highestCount * 100);
     }
+    parent::duelStart();
   }
 
   /**
@@ -89,17 +90,18 @@ class Boxing extends Duel
     if ($winners->getTeamSize() > 1) {
       $this->partyWin($winners->getTeamName());
     } else { // assumes that it was a 1v1 and the 1 loser in the losers array is who we just beat
-      $loser = $this->losers[array_key_first($this->losers)];
+      // 3/29 rare crash fix attempt
+      $loser = !empty($this->losers) ? $this->losers[array_key_first($this->losers)] : null;
       $players = $winners->getPlayers();
-      $winner = $players[array_key_first($players)];
+      $winner = !empty($players) ? $players[array_key_first($players)] : null;
       if ($loser && $winner) {
         // get winner hits and loser hits
         $winnerHits = $winners->getScore();
-        $attackerString = TextFormat::GRAY . " [" . TextFormat::GREEN . $winnerHits . TextFormat::GRAY . "]";
-        $loserString = TextFormat::GRAY . " [" . TextFormat::GREEN . $losers->getScore() . TextFormat::GRAY . "]";
+        $attackerString = TextFormat::GRAY . " (" . TextFormat::GREEN . $winnerHits . TextFormat::GRAY . " )";
+        $loserString = TextFormat::GRAY . " (" . TextFormat::GREEN . $losers->getScore() . TextFormat::GRAY . " )";
 
         $attackerName = $winner->getNicks()->getNick();
-        $boxing = TextFormat::BOLD . TextFormat::GRAY . "[" . TextFormat::AQUA . "Boxing" . TextFormat::GRAY . "]" . TextFormat::RESET . " ";
+        $boxing = TextFormat::GRAY . "(" . TextFormat::AQUA . "Boxing" . TextFormat::GRAY . " )" . TextFormat::RESET . " ";
         $msg = $boxing . TextFormat::GREEN . $attackerName . $attackerString . TextFormat::YELLOW
           . " Defeated " . TextFormat::RED . $loser->getNicks()->getNick() . $loserString;
 
@@ -113,7 +115,7 @@ class Boxing extends Duel
 
   private function partyWin(string $winnerTeamName): void
   {
-    $boxing = TextFormat::BOLD . TextFormat::GRAY . "[" . TextFormat::AQUA . "Boxing Parties" . TextFormat::GRAY . "]" . TextFormat::RESET . " ";
+    $boxing = TextFormat::GRAY . "(" . TextFormat::AQUA . "Boxing Parties" . TextFormat::GRAY . " )" . TextFormat::RESET . " ";
 
     $loserTeamsArray = [];
     foreach ($this->teamManager->getTeams() as $team) {

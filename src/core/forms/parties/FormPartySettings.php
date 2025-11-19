@@ -14,6 +14,12 @@ class FormPartySettings
 
   public static function baseSelection(SwimCore $core, SwimPlayer $player, Party $party): void
   {
+    $isLeader = $party->isPartyLeader($player);
+    if (!$isLeader) {
+      $player->sendMessage(TextFormat::RED . "You do not have permission to do this!");
+      return;
+    }
+
     $form = new SimpleForm(function (SwimPlayer $player, int $data = null) use ($core, $party) {
       if ($data === null) return;
 
@@ -28,9 +34,9 @@ class FormPartySettings
       }
     });
 
-    $form->setTitle(TextFormat::GREEN . "Party Settings");
-    $form->addButton(TextFormat::GREEN . "PvP Settings");
-    $form->addButton(TextFormat::GREEN . "General Party Settings");
+    $form->setTitle(TextFormat::DARK_PURPLE . "Party Settings");
+    $form->addButton(TextFormat::DARK_AQUA . "PvP Settings");
+    $form->addButton(TextFormat::DARK_GREEN . "General Party Settings");
 
     $player->sendForm($form);
   }
@@ -60,7 +66,7 @@ class FormPartySettings
       $player->sendMessage(TextFormat::GREEN . "Party PvP settings have been updated by " . TextFormat::YELLOW . $player->getNicks()->getNick());
     });
 
-    $form->setTitle(TextFormat::GREEN . "Party PvP Settings");
+    $form->setTitle(TextFormat::DARK_AQUA . "Party PvP Settings");
 
     // Add sliders for the knockback and other float-based settings
     $form->addSlider("Vertical Knockback", 0, 100, 1, (int)($party->vertKB * 100));
@@ -130,7 +136,7 @@ class FormPartySettings
       $party->setHubKits();
     });
 
-    $form->setTitle(TextFormat::GREEN . "Party Settings");
+    $form->setTitle(TextFormat::DARK_GREEN . "Party Settings");
     // $form->addInput("Party Name", $party->getPartyName(), $party->getPartyName());
     $form->addToggle("Randomize Teams for Self Duels", $party->getSetting('random'));
     $form->addToggle("Allow Duel Requests", $party->getSetting('allowDuelInvites'));

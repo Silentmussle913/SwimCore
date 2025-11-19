@@ -9,7 +9,7 @@ use pocketmine\network\mcpe\protocol\PacketDecodeException;
 class DisconnectPacket extends Packet
 {
 
-  public const NETWORK_ID = PacketId::DISCONNECT;
+  public const  NETWORK_ID = PacketId::DISCONNECT;
 
   public DisconnectReason $reason;
   public CrashInfo $crashInfo;

@@ -83,7 +83,7 @@ class CombatLogger extends Component
       }
 
       $this->logAttack($victim);
-      $victim->getCombatLogger()->logDamage($this->swimPlayer);
+      $victim->getCombatLogger()?->logDamage($this->swimPlayer);
       return true;
     }
     return false;
@@ -99,7 +99,7 @@ class CombatLogger extends Component
   public function canAttack(SwimPlayer $victim): bool
   {
     $victimCombatLogger = $victim->getCombatLogger();
-    if (!$this->isProtected && !$victimCombatLogger->isProtected()) {
+    if (!isset($victimCombatLogger) || (!$this->isProtected && !$victimCombatLogger->isProtected())) {
       return true;
     }
 

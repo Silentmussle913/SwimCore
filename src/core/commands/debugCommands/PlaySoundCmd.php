@@ -74,4 +74,9 @@ class PlaySoundCmd extends BaseCommand
     }
   }
 
+  public function getPermission(): ?string
+  {
+    return "use.op";
+  }
+
 }

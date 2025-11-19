@@ -34,14 +34,14 @@ class RankCmd extends BaseCommand
   }
 
   // takes in player name and integer as args
-  private function rankCommandLogic(CommandSender $sender, array $args)
+  private function rankCommandLogic(CommandSender $sender, array $args): void
   {
     if (count($args) >= 2) {
       $playerName = $args["player"];
       $rankLevel = $args["rankLevel"];
       if ($rankLevel >= Rank::DEFAULT_RANK && $rankLevel <= Rank::OWNER_RANK) {
         // first attempt to get player online
-        $player = $this->core->getServer()->getPlayerExact($playerName);
+        $player = SeeNick::getPlayerFromNick($playerName);
         if ($player instanceof SwimPlayer) {
           $player->getRank()->setOnlinePlayerRank($rankLevel);
         } else {
@@ -71,6 +71,11 @@ class RankCmd extends BaseCommand
       // from console
       self::rankCommandLogic($sender, $args);
     }
+  }
+
+  public function getPermission(): ?string
+  {
+    return "use.staff";
   }
 
 }

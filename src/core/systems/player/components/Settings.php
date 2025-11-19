@@ -6,8 +6,11 @@ use core\database\SwimDB;
 use core\SwimCore;
 use core\systems\player\Component;
 use core\systems\player\SwimPlayer;
+use core\utils\TimeHelper;
 use Generator;
 use jackmd\scorefactory\ScoreFactoryException;
+use pocketmine\entity\effect\EffectInstance;
+use pocketmine\entity\effect\VanillaEffects;
 use pocketmine\network\mcpe\protocol\CameraShakePacket;
 use pocketmine\network\mcpe\protocol\GameRulesChangedPacket;
 use pocketmine\network\mcpe\protocol\SetTimePacket;
@@ -23,24 +26,33 @@ class Settings extends Component
   // these are class fields because much faster to look up as they are called on every tick almost
   private bool $dc = false;
   private bool $sprint = false;
+  private int $scrimRole = 0;
+  private int $shopType = 0;
+
+  // Centralized definition of settings and their default values
+  private const DEFAULTS = [
+    'showCPS' => true,
+    'showScoreboard' => true,
+    'fullBright' => false,
+    'duelInvites' => true,
+    'partyInvites' => true,
+    'showCords' => false,
+    'showScoreTags' => true,
+    'msg' => true,
+    'pearl' => false, // animated pearl teleport animation
+    'nhc' => false, // no hurt cam
+    'dc' => false,
+    'sprint' => false,
+    'personalTime' => 1000, // default day time
+    // scrim settings from here:
+    'shopType' => 0, // default 0 for forms, 1 for chest UI style
+    'scrimRole' => 0, // enum for scrim role for matchmaking (Banker, Staller, Rusher, Bower)
+  ];
 
   public function __construct(SwimCore $core, SwimPlayer $swimPlayer)
   {
     parent::__construct($core, $swimPlayer);
-    $this->toggles = [
-      'showCPS' => true,
-      'showScoreboard' => true,
-      'duelInvites' => true,
-      'partyInvites' => true,
-      'showCords' => false,
-      'showScoreTags' => true,
-      'msg' => true,
-      'pearl' => false, // animated pearl teleport animation
-      'nhc' => false, // no hurt cam
-      'dc' => false,
-      'sprint' => false,
-      'personalTime' => 1000 // default day time
-    ];
+    $this->toggles = self::DEFAULTS;
   }
 
   /**
@@ -67,9 +79,23 @@ class Settings extends Component
       $this->swimPlayer->getNetworkSession()->sendDataPacket(SetTimePacket::create($this->getToggleInt('personalTime') + 2000000000));
     }
 
-    // set our quick booleans
+    // set our quick booleans and integers
     $this->dc = $this->getToggle('dc');
     $this->sprint = $this->getToggle('sprint');
+    $this->shopType = $this->getToggleInt('shopType');
+    $this->scrimRole = $this->getToggleInt('scrimRole');
+
+    // full bright is just night vision
+    $this->refreshFullBright();
+  }
+
+  public function refreshFullBright(): void
+  {
+    if ($this->getToggle('fullBright')) {
+      $this->swimPlayer->getEffects()->add(new EffectInstance(VanillaEffects::NIGHT_VISION(), TimeHelper::minutesToTicks(900), 1, false));
+    } else {
+      $this->swimPlayer->getEffects()->clear();
+    }
   }
 
   public function dcPreventOn(): bool
@@ -80,6 +106,16 @@ class Settings extends Component
   public function isAutoSprint(): bool
   {
     return $this->sprint;
+  }
+
+  public function getShopType(): int
+  {
+    return $this->shopType;
+  }
+
+  public function getScrimRole(): int
+  {
+    return $this->scrimRole;
   }
 
   public function setToggle(string $setting, bool $state): void
@@ -107,89 +143,96 @@ class Settings extends Component
     return (int)$this->toggles[$setting] ?? null;
   }
 
-  // saves settings to the database
+  /**
+   * Save settings to the database (upsert).
+   */
   public function saveSettings(): void
   {
     $xuid = $this->swimPlayer->getXuid();
-    $showCPS = $this->getToggleInt('showCPS');
-    $showScoreboard = $this->getToggleInt('showScoreboard');
-    $duelInvites = $this->getToggleInt('duelInvites');
-    $partyInvites = $this->getToggleInt('partyInvites');
-    $showCords = $this->getToggleInt('showCords');
-    $showScoreTags = $this->getToggleInt('showScoreTags');
-    $msg = $this->getToggleInt('msg');
-    $pearl = $this->getToggleInt('pearl');
-    $nhc = $this->getToggleInt('nhc');
-    $dc = $this->getToggleInt('dc');
-    $sprint = $this->getToggleInt('sprint');
-    $personalTime = $this->getToggleInt('personalTime') ?? 1000;
 
+    // Build column/value arrays dynamically
+    $columns = array_keys(self::DEFAULTS);
+    $values = [];
+    foreach ($columns as $col) {
+      // Force everything to int for saving
+      $values[$col] = (int)($this->toggles[$col] ?? self::DEFAULTS[$col]);
+    }
+
+    // Build INSERT part
+    $insertCols = implode(", ", array_merge(['xuid'], $columns));
+    $insertVals = implode(", ", array_merge(
+      ["'$xuid'"],                 // quote xuid (string)
+      array_map(fn($v) => $v, $values) // leave integers unquoted
+    ));
+
+    // Build UPDATE part
+    $updateStr = implode(", ", array_map(
+      fn($c) => "$c = {$values[$c]}",
+      $columns
+    ));
+
+    // Final query
     $query = "
-        INSERT INTO Settings (xuid, showCPS, showScoreboard, duelInvites, partyInvites, showCords, showScoreTags, msg, pearl, nhc, dc, sprint, personalTime) 
-        VALUES ('$xuid', '$showCPS', '$showScoreboard', '$duelInvites', '$partyInvites', '$showCords', '$showScoreTags', '$msg', '$pearl', '$nhc', '$dc', '$sprint', '$personalTime')
+        INSERT INTO Settings ($insertCols) 
+        VALUES ($insertVals)
         ON DUPLICATE KEY UPDATE 
             xuid = '$xuid', 
-            showCPS = '$showCPS', 
-            showScoreboard = '$showScoreboard', 
-            duelInvites = '$duelInvites', 
-            partyInvites = '$partyInvites',
-            showCords = '$showCords',
-            showScoreTags = '$showScoreTags',
-            msg = '$msg',
-            pearl = '$pearl',
-            nhc = '$nhc',
-            dc = '$dc',
-            sprint = '$sprint',
-            personalTime = '$personalTime'
+            $updateStr
     ";
+
+    if (SwimCore::$DEBUG) {
+      echo("Generated save settings query: $query\n");
+    }
 
     SwimDB::getDatabase()->executeImplRaw(
       [0 => $query],
       [0 => []],
       [0 => SqlThread::MODE_GENERIC],
-      function () {
-      },
+      fn() => null,
       null
     );
   }
 
-  // this function should be called on player joining server
-
   /**
+   * Load settings from the database (or insert defaults if missing).
    * @throws ScoreFactoryException
    */
   public function load(): Generator
   {
     $xuid = $this->swimPlayer->getXuid();
     $query = "SELECT * FROM Settings WHERE xuid = '$xuid'";
-    $rows = yield from Await::promise(fn($resolve, $reject) => SwimDB::getDatabase()->executeImplRaw([0 => $query], [0 => []], [0 => SqlThread::MODE_SELECT], $resolve, $reject));
 
-    // player must be connected to load data
-    if ($this->swimPlayer->isConnected()) {
+    $rows = yield from Await::promise(fn($resolve, $reject) => SwimDB::getDatabase()->executeImplRaw(
+      [0 => $query],
+      [0 => []],
+      [0 => SqlThread::MODE_SELECT],
+      $resolve,
+      $reject
+    )
+    );
+
+    if ($this->swimPlayer->isConnected() && $this->swimPlayer->isOnline()) {
       if (isset($rows[0]->getRows()[0])) {
         $data = $rows[0]->getRows()[0];
-        // if still online then apply the settings cast as booleans into the toggles map
-        if ($this->swimPlayer->isConnected() && $this->swimPlayer->isOnline()) {
-          $this->toggles = [
-            'showCPS' => (bool)($data['showCPS'] ?? $this->toggles['showCPS']),
-            'showScoreboard' => (bool)($data['showScoreboard'] ?? $this->toggles['showScoreboard']),
-            'duelInvites' => (bool)($data['duelInvites'] ?? $this->toggles['duelInvites']),
-            'partyInvites' => (bool)($data['partyInvites'] ?? $this->toggles['partyInvites']),
-            'showCords' => (bool)($data['showCords'] ?? $this->toggles['showCords']),
-            'showScoreTags' => (bool)($data['showScoreTags'] ?? $this->toggles['showScoreTags']),
-            'msg' => (bool)($data['msg'] ?? $this->toggles['msg']),
-            'pearl' => (bool)($data['pearl'] ?? $this->toggles['pearl']),
-            'nhc' => (bool)($data['nhc'] ?? $this->toggles['nhc']),
-            'dc' => (bool)($data['dc'] ?? $this->toggles['dc']),
-            'sprint' => (bool)($data['sprint'] ?? $this->toggles['sprint']),
-            'personalTime' => $data['personalTime'] ?? $this->toggles['personalTime']
-          ];
-          $this->updateSettings();
+
+        // Merge DB values with defaults
+        foreach (self::DEFAULTS as $key => $default) {
+          if (isset($data[$key])) {
+            // Cast back to bool or int depending on default type
+            $this->toggles[$key] = is_bool($default)
+              ? (bool)$data[$key]
+              : (int)$data[$key];
+          } else {
+            $this->toggles[$key] = $default;
+          }
         }
       } else {
-        $this->saveSettings(); // saving default settings is a way to register them into the database for the first time
-        $this->updateSettings();
+        // Insert defaults for new players
+        $this->saveSettings();
       }
+
+      // Apply loaded settings for their in game properties
+      $this->updateSettings();
     }
   }
 

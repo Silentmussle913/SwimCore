@@ -6,7 +6,6 @@ use pocketmine\math\Vector3;
 
 class ClientEntity
 {
-
   private Vector3 $recvPos;
   private Vector3 $pos;
   private Vector3 $prevPos;
@@ -20,17 +19,31 @@ class ClientEntity
   public function tick(): void
   {
     if ($this->interpolationTicks > 0) {
-      $delta = $this->recvPos->subtractVector($this->pos)->multiply(1 / $this->interpolationTicks);
+      $multAmt = 1 / $this->interpolationTicks;
+
+      $newPos = new Vector3
+      (
+        ($this->recvPos->x - $this->pos->x) * $multAmt + $this->pos->x,
+        ($this->recvPos->y - $this->pos->y) * $multAmt + $this->pos->y,
+        ($this->recvPos->z - $this->pos->z) * $multAmt + $this->pos->z
+      );
+
       $this->interpolationTicks -= 1;
-      $this->setPosition($this->pos->addVector($delta));
+      $this->setPosition($newPos);
+    } else {
+      $this->setPosition($this->recvPos);
     }
   }
 
   public function update(Vector3 $recvPos, int $interpolationTicks): void
   {
-    if ($recvPos->equals($this->recvPos)) return;
+    if ($recvPos->equals($this->recvPos)) {
+      return;
+    }
+
     $this->recvPos = $recvPos;
     $this->interpolationTicks = $interpolationTicks;
+
     if (!isset($this->pos)) {
       $this->pos = $recvPos;
       $this->prevPos = $recvPos;

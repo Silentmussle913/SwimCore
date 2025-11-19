@@ -5,7 +5,6 @@ namespace core\scenes;
 use core\custom\prefabs\rod\FishingHook;
 use core\SwimCore;
 use core\systems\player\SwimPlayer;
-use core\systems\scene\managers\BlocksManager;
 use core\systems\scene\managers\DroppedItemManager;
 use core\systems\scene\Scene;
 use core\utils\ServerSounds;
@@ -15,8 +14,6 @@ use pocketmine\entity\object\ItemEntity;
 use pocketmine\entity\projectile\Arrow as ArrowEntity;
 use pocketmine\entity\projectile\EnderPearl as PearlEntity;
 use pocketmine\entity\projectile\Snowball as SnowballEntity;
-use pocketmine\event\block\BlockBreakEvent;
-use pocketmine\event\block\BlockPlaceEvent;
 use pocketmine\event\entity\EntityDamageByChildEntityEvent;
 use pocketmine\event\entity\EntityDamageByEntityEvent;
 use pocketmine\event\entity\EntityDamageEvent;
@@ -24,7 +21,7 @@ use pocketmine\event\entity\EntityItemPickupEvent;
 use pocketmine\event\entity\EntityRegainHealthEvent;
 use pocketmine\event\entity\EntitySpawnEvent;
 use pocketmine\event\entity\ProjectileLaunchEvent;
-use pocketmine\player\Player;
+use pocketmine\network\mcpe\protocol\types\entity\EntityIds;
 use pocketmine\utils\TextFormat;
 
 // this is a middle man class for doing common pvp mechanics a duel or FFA scene might need
@@ -32,6 +29,7 @@ use pocketmine\utils\TextFormat;
 abstract class PvP extends Scene
 {
 
+  public bool $disableVelocityChecks = false;
   public float $vertKB;
   public float $kb;
   public float $controllerVertKB;
@@ -50,15 +48,16 @@ abstract class PvP extends Scene
 
   public bool $tntBreaksBlocks = false;
   public bool $canThrowTnt = true;
+  public float $tntRadius = 3.5;
+  public int $tntFuse = 40;
+  public int $maxHearts = 10;
 
-  protected BlocksManager $blocksManager;
   protected DroppedItemManager $droppedItemManager;
 
   public function __construct(SwimCore $core, string $name)
   {
     parent::__construct($core, $name);
 
-    $this->blocksManager = new BlocksManager($core, $this->world);
     $this->droppedItemManager = new DroppedItemManager();
 
     $this->vertKB = 0.4;
@@ -75,17 +74,6 @@ abstract class PvP extends Scene
     $this->naturalRegen = true;
     $this->fallDamage = false;
     $this->voidDamage = false; // most scenes will have custom bounding boxes set for playable region, anything outside no block placement or damage
-  }
-
-  public function updateSecond(): void
-  {
-    parent::updateSecond();
-    $this->blocksManager->updateSecond();
-  }
-
-  public final function getBlockManager(): BlocksManager
-  {
-    return $this->blocksManager;
   }
 
   public final function getDroppedItemManager(): DroppedItemManager
@@ -152,16 +140,22 @@ abstract class PvP extends Scene
   public function sceneProjectileLaunchEvent(ProjectileLaunchEvent $event, SwimPlayer $swimPlayer): void
   {
     $player = $event->getEntity()->getOwningEntity();
-    if ($player instanceof Player) {
-      $item = $event->getEntity();
-      if ($item instanceof PearlEntity) {
-        $projectile = $event->getEntity();
+    if ($player::getNetworkTypeId() == EntityIds::PLAYER) {
+      $projectile = $event->getEntity();
+      if ($projectile::getNetworkTypeId() == EntityIds::ENDER_PEARL) {
         $projectile->setScale(0.5);
         $projectile->setMotion($projectile->getDirectionVector()->multiply($this->pearlSpeed));
         $projectile->setGravity($this->pearlGravity);
       }
     }
   }
+
+  private static array $kbMap = [
+    EntityIds::ENDER_PEARL => 0.4,
+    EntityIds::ARROW => 0.3,
+    EntityIds::SNOWBALL => 0.25,
+    EntityIds::FISHING_HOOK => 0.5,
+  ];
 
   // projectile hit handling
   public function sceneEntityDamageByChildEntityEvent(EntityDamageByChildEntityEvent $event, SwimPlayer $swimPlayer): void
@@ -213,9 +207,25 @@ abstract class PvP extends Scene
   // optional override
   protected function hitByProjectile(SwimPlayer $hitPlayer, SwimPlayer $hitter, Entity $projectile, EntityDamageByChildEntityEvent $event): void
   {
-    if ($projectile instanceof ArrowEntity) {
+    $id = $projectile::getNetworkTypeId();
+    if ($id == EntityIds::ARROW) {
+      $this->arrowDamageMessage($hitter, $hitPlayer, $event);
+    } elseif ($id == EntityIds::SNOWBALL || $id == EntityIds::EGG) {
       ServerSounds::playSoundToPlayer($hitter, 'note.bell', 2, 1);
-      $hitter->sendMessage(TextFormat::GREEN . $hitPlayer->getNicks()->getNick() . " Has " . round($hitPlayer->getHealth(), 1) . " HP");
+    }
+
+    // handle the attack for combat logging
+    $hitter->getCombatLogger()?->handleAttack($hitPlayer);
+  }
+
+  protected function arrowDamageMessage(SwimPlayer $hitter, SwimPlayer $hitPlayer, EntityDamageByChildEntityEvent $event, bool $doSound = true): void
+  {
+    $hp = $hitPlayer->getHearts($event->getFinalDamage());
+    if ($hp > 0) {
+      $hitter->sendMessage(TextFormat::GREEN . $hitPlayer->getNicks()->getNick() . " has $hp Hearts");
+    }
+    if ($doSound) {
+      ServerSounds::playSoundToPlayer($hitter, 'note.bell', 2, 1);
     }
   }
 
@@ -237,7 +247,8 @@ abstract class PvP extends Scene
 
   public function scenePlayerSpawnChildEvent(EntitySpawnEvent $event, SwimPlayer $swimPlayer, Entity $spawnedEntity): void
   {
-    if ($spawnedEntity instanceof ItemEntity) {
+    if ($spawnedEntity::getNetworkTypeId() == EntityIds::ITEM) {
+      /** @var $spawnedEntity ItemEntity */
       $this->droppedItemManager->addDroppedItem($spawnedEntity);
     }
   }
@@ -245,24 +256,15 @@ abstract class PvP extends Scene
   public function scenePlayerPickupItem(EntityItemPickupEvent $event, SwimPlayer $swimPlayer): void
   {
     $origin = $event->getOrigin();
-    if ($origin instanceof ItemEntity) {
+    if ($origin::getNetworkTypeId() == EntityIds::ITEM) {
+      /** @var $origin ItemEntity */
       $this->droppedItemManager->removeDroppedItem($origin);
     }
   }
 
-  public function sceneBlockBreakEvent(BlockBreakEvent $event, SwimPlayer $swimPlayer): void
-  {
-    $this->blocksManager->handleBlockBreak($event);
-  }
-
-  public function sceneBlockPlaceEvent(BlockPlaceEvent $event, SwimPlayer $swimPlayer): void
-  {
-    $this->blocksManager->handleBlockPlace($event);
-  }
-
   public function exit(): void
   {
-    $this->blocksManager->cleanMap();
+    parent::exit();
     $this->droppedItemManager->despawnAll();
   }
 

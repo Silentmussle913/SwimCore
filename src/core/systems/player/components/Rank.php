@@ -158,8 +158,10 @@ class Rank extends Component
   public function setTempRank(int $rank): void
   {
     $this->rank = $rank;
-    $this->swimPlayer->sendMessage(TextFormat::GREEN . "Your Rank has been Updated to " . self::getRankNameString($rank));
-    $this->updatePerms();
+    if ($this->swimPlayer->isOnline()) {
+      $this->swimPlayer->sendMessage(TextFormat::GREEN . "Your Rank has been Updated to " . self::getRankNameString($rank));
+      $this->updatePerms();
+    }
   }
 
   // runs the temp rank function to set the rank in game server memory, then hits the database
@@ -225,7 +227,7 @@ class Rank extends Component
     if ($this->rank == 0 || $this->swimPlayer->getNicks()->isNicked()) {
       return TextFormat::GRAY . $this->swimPlayer->getNicks()->getNick();
     }
-    $rankStr = TextFormat::GRAY . "[" . self::getRankNameString($this->rank) . TextFormat::GRAY . "]";
+    $rankStr = TextFormat::GRAY . "(" . self::getRankNameString($this->rank) . TextFormat::GRAY . ")";
     // $rankStr = TextFormat::GRAY . "[" . self::getRankAbbreviationString($this->rank) . TextFormat::GRAY . "]";
     return $rankStr . $this->swimPlayer->getCosmetics()->getNameColor() . " " . $this->swimPlayer->getName(); // should have cosmetics getChatColor()
   }

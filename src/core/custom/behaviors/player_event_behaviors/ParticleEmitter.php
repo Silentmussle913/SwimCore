@@ -51,7 +51,7 @@ class ParticleEmitter extends EventBehaviorComponent
       "chroma_sparkler" => SparklerParticle::rgb(0, 0, 0),
       "crits" => new CriticalParticle(),
       "enchant" => new EnchantmentTableParticle(),
-      "ender" => new EndermanTeleportParticle(),
+      // "ender" => new EndermanTeleportParticle(), // not a protocol particle
       "flame" => new FlameParticle(),
       "heart" => new HeartParticle(),
       "lava" => new LavaDripParticle(),

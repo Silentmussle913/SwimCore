@@ -4,7 +4,8 @@ namespace core\scenes\ffas;
 
 use core\SwimCore;
 use core\systems\player\SwimPlayer;
-use core\utils\BehaviorEventEnums;
+use core\systems\scene\FFAInfo;
+use core\utils\BehaviorEventEnum;
 use core\utils\CustomDamage;
 use core\utils\InventoryUtil;
 use jackmd\scorefactory\ScoreFactoryException;
@@ -15,6 +16,11 @@ use pocketmine\utils\TextFormat;
 class MidFightFFA extends FFA
 {
 
+  public static function getIcon(): string
+  {
+    return "textures/items/diamond_chestplate";
+  }
+
   public function __construct(SwimCore $core, string $name)
   {
     $this->world = $core->getServer()->getWorldManager()->getWorldByName("midFFA");
@@ -24,9 +30,17 @@ class MidFightFFA extends FFA
   function init(): void
   {
     parent::init();
+
+    $this->info = new FFAInfo(
+      "MidFightFFA",
+      TextFormat::RED . "Midfight",
+      "midFFA",
+      2
+    );
+
     $this->registerCanceledEvents([
-      BehaviorEventEnums::PLAYER_DROP_ITEM_EVENT,
-      BehaviorEventEnums::BLOCK_BREAK_EVENT
+      BehaviorEventEnum::PLAYER_DROP_ITEM_EVENT,
+      BehaviorEventEnum::BLOCK_BREAK_EVENT
     ]);
 
     // arena center
@@ -61,8 +75,7 @@ class MidFightFFA extends FFA
 
   protected function playerKilled(SwimPlayer $attacker, SwimPlayer $victim, EntityDamageByEntityEvent $event): void
   {
-    $this->midfKillMessage($attacker, $victim);
-    $attacker->getCosmetics()->killMessageLogic($victim);
+    $this->killMessage($attacker, $victim);
     $attacker->setHealth($attacker->getMaxHealth());
   }
 
@@ -70,22 +83,6 @@ class MidFightFFA extends FFA
   {
     // apply no critical custom damage
     CustomDamage::customDamageHandle($event);
-  }
-
-  private function midfKillMessage(SwimPlayer $attacker, SwimPlayer $victim): void
-  {
-    $attackerName = $attacker->getNicks()->getNick();
-    $attackerHP = round($attacker->getHealth() / 2, 1);
-    $attackerHealthString = " " . TextFormat::GRAY . "[" . TextFormat::YELLOW . $attackerHP . " Hearts" . TextFormat::GRAY . "]";
-
-    $victimName = $victim->getNicks()->getNick();
-
-    $midFFA = TextFormat::BOLD . TextFormat::GRAY . "[" . TextFormat::AQUA . "MID FFA" . TextFormat::GRAY . "]" . TextFormat::RESET . " ";
-
-    $msg = $midFFA . TextFormat::GREEN . $attackerName . $attackerHealthString . TextFormat::YELLOW
-      . " Killed " . TextFormat::RED . $victimName;
-
-    $this->sceneAnnouncement($msg);
   }
 
   /**
@@ -96,6 +93,7 @@ class MidFightFFA extends FFA
     parent::updateSecond();
 
     foreach ($this->players as $player) {
+      if (!$player->isOnline()) continue; // maybe a fix
       $this->ffaScoreboard($player);
       $this->ffaScoreTag($player);
     }
