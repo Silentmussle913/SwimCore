@@ -2,13 +2,7 @@
 
 namespace core\systems\map;
 
-use core\maps\info\SurvivalGamesMapInfo;
 use core\maps\pool\BasicDuelMaps;
-use core\maps\pool\BedFightPool;
-use core\maps\pool\BridgeMapPool;
-use core\maps\pool\RankedSkywarsMapPool;
-use core\maps\pool\ScrimPool;
-use core\maps\pool\SurvivalGamesMapPool;
 use core\systems\player\SwimPlayer;
 use core\systems\System;
 

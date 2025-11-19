@@ -5,11 +5,11 @@ So basically imagine a game engine placed ontop of PocketMine.
 
 ## Getting Started
 
-- **PHP Version**: We use PHP 8.2.
-- **PocketMine Fork**: Swim.gg and Divinity use a fork of the NetherGames PocketMine for multi-version support.
-  - Using the normal NGPM and distributed PocketMine PHP binaries should also work fine. If anything requires minor tweaks.
+- **Minimum PHP Version**: 8.2 (8.4 JIT recommended for production servers)
+- **PocketMine Version**: Swim Services has a fork of the NetherGames PocketMine for multi-version support.
+  - Using the normal NGPM and distributed PocketMine PHP binaries should also work fine. 
   - HIGHLY recommended you use NGPM or our own fork of Pocketmine [here](https://github.com/Swim-Services/PocketMine-MP).
-- **Virions**: The virions we use for Swim.gg are listed in `.poggit.yml`. You need to download them off poggit and place them in the `virions` directory.
+- **Virions**: The virions we use for SwimCore are listed below in the example `.poggit.yml`. You need to download them off poggit/github and place them in the `virions` directory.
 
 ### Example `.poggit.yml` Configuration:
 ```yaml
@@ -29,6 +29,12 @@ projects:
         version: ^4.4.1
       - src: jasonw4331/libpmquery/libpmquery
         version: ^1.0.0
+      - src: kaxyum/CameraAPI/CameraHandler
+        version: ^1.0.0
+      - src: muqsit/simplepackethandler/SimplePacketHandler
+        version: ^0.1.5
+      - src: CortexPE/Commando/Commando
+        version: ^3.2.0
 ```
 
 ## World Setup
@@ -83,7 +89,6 @@ database:
 
 ## Designed to be a library based "AAA" Game Engine
 
-- This represents about 2 years of rewrites and learning, totaling around 7 months of real-time work between breaks.
 - **Core Design**: 
   - Powered by a **System Manager** class that updates core systems every tick and second for:
     - Scenes
@@ -103,7 +108,13 @@ database:
 - **Scenes**: Hub, Kit FFA, duels, and other parts of the server are handled as separate scenes.
 - **Player ECS**: Entity Component System used to handle player behaviors and callbacks.
 - **Custom Actors**: Create custom entities with skins, geometries, and behaviors to control them.
-  
+
+### Duel & FFA scenes with Queueing + Map Pools
+
+- Configure your duels in `data/duels.json` to be used in the Queue scene with proper configuration.
+- Any `FFA` deriving scene during `init` can set the `protected FFAInfo $info` field to assist in registration.
+- Currently all Map Pools must be manually defined and allocated inside `MapsData::$mapPools`.
+
 ---
 
 ## Auto-Loading of Actors, Commands, and Scenes
@@ -141,6 +152,11 @@ This repo contains only the **game engine**.
 - **Discord Communicator**: Our discord integration is now included in SwimCore publicly. This can be used for linking discord accounts to players in your database and talking to the server with your bots back and forth.
 - **Database Tables**: Contains basic tables for storing player history, settings, punishments, and ranks.
 - **Punishment Commands**: Muting and banning commands are included, but without advanced features like alternate account tracking via client data collection.
+
+## In Progress
+
+- Bots with behaviors and pathing. Right now just have a basic follow bot with an editable inventory.
+- Replay system (needs animations and some bug fixes for armor) + support for other actors and database serialization + performance profiling.
 
 ## TODO
 
