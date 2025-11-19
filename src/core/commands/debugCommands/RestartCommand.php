@@ -3,7 +3,7 @@
 namespace core\commands\debugCommands;
 
 use core\SwimCore;
-use core\utils\security\IpParse;
+use core\utils\security\IPParse;
 use core\utils\TaskUtils;
 use CortexPE\Commando\args\IntegerArgument;
 use CortexPE\Commando\BaseCommand;
@@ -61,7 +61,7 @@ class RestartCommand extends BaseCommand
 
     foreach ($this->swimCore->getServer()->getOnlinePlayers() as $p) {
       $serverAddr = $p->getPlayerInfo()->getExtraData()["ServerAddress"] ?? "0.0.0.0:1";
-      $parsedIp = IpParse::sepIpFromPort($serverAddr);
+      $parsedIp = IPParse::sepIpFromPort($serverAddr);
       $p->getNetworkSession()->transfer($parsedIp[0], $parsedIp[1]);
     }
 
@@ -102,6 +102,11 @@ class RestartCommand extends BaseCommand
       }
     }, 1); // not sure what time unit delay is in
 
+  }
+
+  public function getPermission(): ?string
+  {
+    return "use.op";
   }
 
 }

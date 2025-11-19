@@ -17,7 +17,7 @@ class SwimPearlItem extends EnderPearl
   private ?SwimPlayer $swimPlayer;
   private ?bool $animated;
 
-  public function __construct(?SwimPlayer $swimPlayer, int $count = 1)
+  public function __construct(?SwimPlayer $swimPlayer = null, int $count = 1)
   {
     parent::__construct(new IID(Ids::ENDER_PEARL), "Ender Pearl");
     $this->setCount($count);

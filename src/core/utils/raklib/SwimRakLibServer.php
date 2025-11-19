@@ -11,6 +11,8 @@ use raklib\server\ipc\UserToRakLibThreadMessageReceiver;
 use raklib\server\ServerSocket;
 use raklib\utils\ExceptionTraceCleaner;
 use ReflectionException;
+use function gc_enable;
+use function ini_set;
 
 class SwimRakLibServer extends RakLibServer
 {

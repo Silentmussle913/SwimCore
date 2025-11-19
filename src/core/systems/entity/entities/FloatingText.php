@@ -39,7 +39,7 @@ class FloatingText extends Actor
   {
   }
 
-  public function setText(string $title, string $text)
+  public function setText(string $title, string $text): void
   {
     $fullText = $title . "\n" . TextFormat::RESET . $text;
     if ($this->getNameTag() !== $fullText) {

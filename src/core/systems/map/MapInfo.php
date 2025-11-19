@@ -12,8 +12,8 @@ class MapInfo
 
   private bool $active;
   private string $mapName;
-  private Vector3 $spawnPos1;
-  private Vector3 $spawnPos2;
+  protected Vector3 $spawnPos1;
+  protected Vector3 $spawnPos2;
 
   // if swap is passed as true, spawn pos 1 and 2 will swap values, this is to fix json inconsistencies
   public function __construct

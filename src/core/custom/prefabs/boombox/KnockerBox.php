@@ -19,6 +19,13 @@ class KnockerBox extends BaseBox
   public function place(BlockTransaction $tx, Item $item, Block $blockReplace, Block $blockClicked, int $face, Vector3 $clickVector, ?Player $player = null): bool
   {
     if ($player instanceof SwimPlayer) {
+
+      // if on cool down then don't do throwing tnt logic
+      $cd = $player->getCoolDowns();
+      if ($cd?->onCoolDown($item)) {
+        return false;
+      }
+
       $pos = $blockReplace->getPosition();
       $primedTnt = new KnockerBoxEntity(Location::fromObject($pos->add(0.5, 0, 0.5), $pos->getWorld()), $player);
       $mot = (new Random())->nextSignedFloat() * M_PI * 2;
@@ -26,6 +33,10 @@ class KnockerBox extends BaseBox
       $primedTnt->setFuse(15);
       $primedTnt->spawnToAll();
       $primedTnt->broadcastSound(new IgniteSound());
+
+      // then add a cool down to it
+      $cd->setCoolDown($item, 0.10, false);
+      // $cd->setFocused($item);
       InventoryUtil::forceItemPop($player, $item);
     }
 

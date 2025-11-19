@@ -44,4 +44,10 @@ class PositionCommand extends BaseCommand
       $sender->sendMessage("Pos " . $pos . ": " . $posString);
     }
   }
+
+  public function getPermission(): ?string
+  {
+    return "use.op";
+  }
+
 }

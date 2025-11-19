@@ -6,7 +6,7 @@ use core\communicator\packet\types\embed\Embed;
 
 class DiscordEmbedSendPacket extends Packet
 {
-  public const NETWORK_ID = PacketId::DISCORD_EMBED_SEND;
+  public const  NETWORK_ID = PacketId::DISCORD_EMBED_SEND;
 
   public string $channelId;
   public Embed $embed;

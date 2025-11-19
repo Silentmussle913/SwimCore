@@ -11,7 +11,6 @@ use CortexPE\Commando\exception\ArgumentOrderException;
 use pocketmine\command\CommandSender;
 use pocketmine\console\ConsoleCommandSender;
 use pocketmine\Server;
-use pocketmine\utils\TextFormat as TF;
 
 class TebexRank extends BaseCommand
 {
@@ -46,28 +45,20 @@ class TebexRank extends BaseCommand
   {
     if (!($sender instanceof ConsoleCommandSender)) return; // console only
 
-    $user = $args["username"];
+    // $user = $args["username"];
     $packageName = $args["packageName"];
     $xuid = $args["id"];
-    $price = $args["price"];
+    // $price = $args["price"];
 
     $rankLevel = Rank::getRankLevelFromPackageName($packageName);
 
-    $alert = TF::DARK_GRAY . "[" . TF::RED . "ALERT" . TF::DARK_GRAY . "] " . TF::RESET;
-    $message = TF::AQUA . $user . TF::LIGHT_PURPLE . " Purchased " . TF::GREEN . $packageName . TF::DARK_GRAY . " (" . TF::GREEN . "$" . $price . TF::DARK_GRAY . ")";
-    $site = TF::DARK_GRAY . " | " . TF::AQUA . "swim.tebex.io";
-    $this->server->broadcastMessage($alert . $message . $site);
-
-    // first attempt to get player online
-    $player = $this->core->getServer()->getPlayerExact($user);
-    if ($player instanceof SwimPlayer) {
-      $rank = $player->getRank();
-      $level = $rank->getRankLevel();
-      if ($rankLevel > $level) { // checks if it is an upgrade, if so then rank upgrade them
-        $rank->setOnlinePlayerRank($rankLevel);
-      }
-    } else { // otherwise do it offline
-      Rank::attemptRankUpgrade($xuid, $rankLevel);
-    }
+    // TebexAlert sets their rank to something temporary if they are online, this commands single job is to update the rank in the database, as its only ran on the hub server
+    Rank::attemptRankUpgrade($xuid, $rankLevel);
   }
+
+  public function getPermission(): ?string
+  {
+    return "use.op";
+  }
+
 }

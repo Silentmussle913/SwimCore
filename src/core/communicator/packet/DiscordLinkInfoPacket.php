@@ -8,7 +8,7 @@ use core\systems\player\SwimPlayer;
 class DiscordLinkInfoPacket extends Packet
 {
 
-  public const NETWORK_ID = PacketId::DISCORD_LINK_INFO;
+  public const  NETWORK_ID = PacketId::DISCORD_LINK_INFO;
 
   private string $ign;
   private string $discordName;

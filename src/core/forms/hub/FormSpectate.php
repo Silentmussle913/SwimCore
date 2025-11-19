@@ -31,7 +31,7 @@ class FormSpectate
           $duel = $buttons[$sceneName];
           if ($duel instanceof Duel) {
             // duel must not be finished and have more than 1 non-spec in it
-            if (!$duel->isFinished() && ($duel->getNonSpecsPlayerCount() >= 2 || SwimCore::$DEBUG)) {
+            if (!$duel->isFinished() && ($duel->alwaysAllowSpectators() || $duel->getNonSpecsPlayerCount() >= 2 || SwimCore::$DEBUG)) {
               $duel->sceneAnnouncement(TextFormat::AQUA . $swimPlayer->getNicks()->getNick() . " Started Spectating");
               if ($swimPlayer->getSceneHelper()->setNewScene($sceneName)) {
                 $duel->getTeamManager()->getSpecTeam()->addPlayer($swimPlayer); // this should set them into spectator mode

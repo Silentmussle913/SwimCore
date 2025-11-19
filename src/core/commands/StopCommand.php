@@ -57,4 +57,9 @@ class StopCommand extends BaseCommand
     }, 5); // give clients time to disconnect
   }
 
+  public function getPermission(): ?string
+  {
+    return "use.staff";
+  }
+
 }

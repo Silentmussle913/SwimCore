@@ -7,7 +7,7 @@ use core\communicator\Communicator;
 
 class PlayerListResponsePacket extends Packet
 {
-  public const NETWORK_ID = PacketId::PLAYER_LIST_RESPONSE;
+  public const  NETWORK_ID = PacketId::PLAYER_LIST_RESPONSE;
 
   public string $regionName = "";
   public bool $offline = false;
@@ -39,4 +39,5 @@ class PlayerListResponsePacket extends Packet
     }
     $communicator->updateRegionPlayers($this->regionName, $this->players);
   }
+
 }

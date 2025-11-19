@@ -10,7 +10,6 @@ use core\systems\player\SwimPlayer;
 use core\systems\scene\Scene;
 use jackmd\scorefactory\ScoreFactoryException;
 use core\systems\scene\SceneSystem;
-use JsonException;
 use pocketmine\utils\TextFormat;
 
 // this is a simple helper class to cache what scene and party the player is in and do some automated actions
@@ -19,7 +18,7 @@ class SceneHelper extends Component
 {
 
   // the scene the player is currently in
-  private Scene $scene;
+  private ?Scene $scene = null;
 
   // the party, if at all, the player is currently in
   private ?Party $party = null; // TO DO : make sure this gets set to null when party disbands and when player leaves the party
@@ -38,7 +37,7 @@ class SceneHelper extends Component
     parent::__construct($core, $swimPlayer);
     $this->teamNumber = -1;
     $this->sceneSystem = $this->core->getSystemManager()->getSceneSystem();
-    $this->scene = $this->sceneSystem->getScene('Loading'); // default scene right away as server loads the player's data
+    // $this->scene = $this->sceneSystem->getScene('Loading'); // default scene right away as server loads the player's data (this was a huge bug)
   }
 
   public function getScene(): ?Scene
@@ -107,8 +106,8 @@ class SceneHelper extends Component
 
   /**
    * @brief Sets the scene the player is in
-   * @return bool if worked
    * @throws ScoreFactoryException
+   * @return bool if worked
    */
   public function setNewScene(string $sceneName): bool
   {

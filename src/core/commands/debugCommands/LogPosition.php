@@ -87,4 +87,9 @@ class LogPosition extends BaseCommand
     $sender->sendMessage("Positions saved to JSON file: $filePath");
   }
 
+  public function getPermission(): ?string
+  {
+    return "use.op";
+  }
+
 }

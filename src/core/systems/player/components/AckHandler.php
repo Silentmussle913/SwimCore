@@ -50,11 +50,9 @@ class AckHandler extends Component
         case AckType::KNOCKBACK:
           /** @var KnockbackAck $nslAck */
           $data = $this->swimPlayer->getAntiCheatData();
-          if($data) {
+          if ($data) {
             $data->runVelo = true;
             $data->currentMotion = $nslAck->motion;
-            // $m = $data->getMotion();
-            // $m?->setSleepTicks((int)(20 * $nslAck->motion->length())); // 1 second of ticks per length unit
             $data->lastMotionAckRecvTick = $this->swimPlayer->getServer()->getTick();
           }
           break;

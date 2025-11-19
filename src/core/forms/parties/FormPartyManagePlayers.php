@@ -13,6 +13,12 @@ class FormPartyManagePlayers
 
   public static function listPlayers(SwimCore $core, SwimPlayer $player, Party $party): void
   {
+    $isLeader = $party->isPartyLeader($player);
+    if (!$isLeader) {
+      $player->sendMessage(TextFormat::RED . "You do not have permission to do this!");
+      return;
+    }
+
     $buttons = [];
 
     // first get all players in the party

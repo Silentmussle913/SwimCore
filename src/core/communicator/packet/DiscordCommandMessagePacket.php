@@ -5,7 +5,7 @@ namespace core\communicator\packet;
 
 class DiscordCommandMessagePacket extends Packet
 {
-  public const NETWORK_ID = PacketId::DISCORD_COMMAND_MESSAGE;
+  public const  NETWORK_ID = PacketId::DISCORD_COMMAND_MESSAGE;
 
   public string $commandMessage;
   public string $requestId;

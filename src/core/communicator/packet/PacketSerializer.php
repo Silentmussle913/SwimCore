@@ -8,7 +8,7 @@ use pocketmine\utils\BinaryStream;
 class PacketSerializer extends BinaryStream
 {
 
-  public function putString(string $str)
+  public function putString(string $str): void
   {
     $this->putUnsignedVarInt(strlen($str));
     $this->put($str);
@@ -20,7 +20,7 @@ class PacketSerializer extends BinaryStream
     return $this->get($len);
   }
 
-  public function putArray(array $arr, Closure $writer)
+  public function putArray(array $arr, Closure $writer): void
   {
     $this->putUnsignedVarInt(count(value: $arr));
     foreach ($arr as $elem) {
@@ -38,7 +38,7 @@ class PacketSerializer extends BinaryStream
     return $arr;
   }
 
-  public function putMap(array $map, Closure $keyWriter, Closure $valueWriter)
+  public function putMap(array $map, Closure $keyWriter, Closure $valueWriter): void
   {
     $this->putUnsignedVarInt(count(value: $map));
     foreach ($map as $key => $elem) {

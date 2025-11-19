@@ -43,13 +43,17 @@ class SwimBow extends Bow
     $diff = $player->getItemUseDuration();
     $p = $diff / 20;
     $baseForce = min((($p ** 2) + $p * 2) / 3, 1);
-    $entity = new SwimArrow(Location::fromObject(
+
+    $loc = Location::fromObject(
       $player->getEyePos(),
       $player->getWorld(),
       ($location->yaw > 180 ? 360 : 0) - $location->yaw,
       -$location->pitch
-    ), $player, $baseForce >= 1);
+    );
+
+    $entity = new SwimArrow($loc, $player, $baseForce >= 1);
     $entity->setMotion($player->getDirectionVector());
+    $entity->firedLocation = $loc;
 
     // fixed values
     if ($diff < 9) {

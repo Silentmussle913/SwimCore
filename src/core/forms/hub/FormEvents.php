@@ -35,10 +35,10 @@ class FormEvents
       }
     });
 
-    $form->setTitle(TextFormat::GREEN . "Events");
+    $form->setTitle(TextFormat::DARK_GREEN . "Events");
 
-    $form->addButton(TextFormat::GREEN . "Create Event");
-    $form->addButton(TextFormat::GREEN . "Join Events " . TextFormat::DARK_GRAY
+    $form->addButton(TextFormat::DARK_GREEN . "Create Event");
+    $form->addButton(TextFormat::DARK_GREEN . "Join Events " . TextFormat::DARK_GRAY
       . "[" . TextFormat::YELLOW . $eventSystem->getInQueueEventsCount() . TextFormat::DARK_GRAY . "]");
 
     $player->sendForm($form);
@@ -94,24 +94,23 @@ class FormEvents
 
       $mode = $data[0];
 
-      // first mode index 0 is modded sg (at least in swimgg private)
+      // first mode index 0 is modded sg
       if ($mode == 0) {
         self::moddedSGForm($player, $core, $eventSystem);
       }
     });
 
-    $form->setTitle(TextFormat::GREEN . "Create an Event");
-    $form->addDropdown("Select Event Mode", ["Placeholder"] /* would be modded sg*/, 0);
+    $form->setTitle(TextFormat::DARK_GREEN . "Create an Event");
+    $form->addDropdown("Select Event Mode", ["Modded SG"], 0);
 
     $swimPlayer->sendForm($form);
   }
 
+  // This is all pseudo assuming you have implemented a SurvivalGamesEvent and SurvivalGamesMapInfo
   private static function moddedSGForm(SwimPlayer $swimPlayer, SwimCore $core, EventSystem $eventSystem): void
   {
-    /* example code below from swimgg repo:
-
     // get the available sg maps we can select from
-    $maps = $core->getSystemManager()->getMapsData()->getAvailableSGMaps();
+    $maps = $core->getSystemManager()->getMapsData()->getMapPool("sg")?->getMaps() ?? null;
     if (empty($maps)) {
       $swimPlayer->sendMessage(TextFormat::RED . "Sorry, currently all SG maps are in use");
       return;
@@ -126,6 +125,7 @@ class FormEvents
       $mapIndex = $data[0]; // returns the index of the array
       $teamSize = $data[1];
 
+      // Wrong because $maps is not an array
       $map = array_keys($maps)[$mapIndex]; // use that index to get the map key from maps array
 
       // safety check
@@ -157,7 +157,6 @@ class FormEvents
     $form->addDropdown("Select Map", array_keys($maps), 0);
     $form->addSlider("Team Size", 1, 4);
     $swimPlayer->sendForm($form);
-    */
   }
 
 }

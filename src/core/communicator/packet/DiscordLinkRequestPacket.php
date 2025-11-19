@@ -5,7 +5,7 @@ namespace core\communicator\packet;
 class DiscordLinkRequestPacket extends Packet
 {
 
-  public const NETWORK_ID = PacketId::DISCORD_LINK_REQUEST;
+  public const  NETWORK_ID = PacketId::DISCORD_LINK_REQUEST;
 
   public string $ign;
   public bool $remove = false;

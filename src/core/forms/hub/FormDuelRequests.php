@@ -2,13 +2,11 @@
 
 namespace core\forms\hub;
 
-use core\scenes\duel\Boxing;
 use core\scenes\duel\Duel;
 use core\scenes\duel\IconHelper;
-use core\scenes\duel\Midfight;
-use core\scenes\duel\Nodebuff;
 use core\scenes\hub\Queue;
 use core\SwimCore;
+use core\systems\map\MapsData;
 use core\systems\player\components\Rank;
 use core\systems\player\SwimPlayer;
 use jackmd\scorefactory\ScoreFactoryException;
@@ -164,45 +162,34 @@ class FormDuelRequests
   {
     if (!$user->isInScene("Hub")) return;
 
-    $modes = Duel::$MODES;
+    $buttons = []; // index -> modeName
 
-    // Create the simple form
-    $form = new SimpleForm(function (SwimPlayer $player, $data) use ($core, $invited, $user, $modes) {
-      if ($data === null) {
-        return; // Form closed or no input
-      }
-
+    $form = new SimpleForm(function (SwimPlayer $player, $data) use ($core, $invited, $user, &$buttons) {
+      if ($data === null) return;
       if (!$player->isInScene("Hub")) return;
 
       // attempt to fix stale invite crash
-      if(!(isset($invited) && isset($user) && $invited->isOnline() && $user->isOnline())) return;
+      if (!(isset($invited) && isset($user) && $invited->isOnline() && $user->isOnline())) return;
 
-      // Check if the selected button corresponds to a valid game mode
-      if (isset($modes[$data])) {
-        $mode = $modes[$data];
-
-        // Check the rank of the user and proceed accordingly
-        $rankLevel = $user->getRank()->getRankLevel();
-        if ($rankLevel > Rank::DEFAULT_RANK) {
-          // Higher-ranked users get to select a map from the mode
-          self::selectMapForMode($core, $user, $invited, $mode);
-        } else {
-          // Default rank users proceed with a random map
-          $invited->getInvites()?->duelInvitePlayer($player, $mode);
-          $player->sendMessage(self::$adMsg);
-        }
-      } else {
+      $mode = $buttons[$data] ?? null;
+      if ($mode === null) {
         $player->sendMessage(TextFormat::RED . "Error: Invalid game mode selected.");
+        return;
+      }
+
+      // Check the rank of the user and proceed accordingly
+      $rankLevel = $user->getRank()->getRankLevel();
+      if ($rankLevel > Rank::DEFAULT_RANK) {
+        // Higher-ranked users get to select a map from the mode
+        self::selectMapForMode($core, $user, $invited, $mode);
+      } else {
+        // Default rank users proceed with a random map
+        $invited->getInvites()?->duelInvitePlayer($player, $mode);
+        $player->sendMessage(self::$adMsg);
       }
     });
 
-    // Set the title of the form
-    $form->setTitle(TextFormat::DARK_GREEN . "Select Game Mode");
-
-    // Add buttons for each game mode with corresponding icons
-    $form->addButton("§4Nodebuff", 0, Nodebuff::getIcon());
-    $form->addButton("§4Boxing", 0, Boxing::getIcon());
-    $form->addButton("§4Midfight", 0, Midfight::getIcon());
+    $buttons = self::buildDuelFormWithButtons($form, $buttons, $user);
 
     // Send the form to the user
     $user->sendForm($form);
@@ -211,67 +198,124 @@ class FormDuelRequests
   private static function selectMapForMode(SwimCore $core, SwimPlayer $user, SwimPlayer $invited, string $mode): void
   {
     $mapsData = $core->getSystemManager()->getMapsData();
+    $names = self::collectUniqueMapNames($mapsData, $mode);
+    if (empty($names)) {
+      $user->sendMessage(TextFormat::RED . "No maps available for this mode.");
+      return;
+    }
 
-    // Fetch the map pool based on the mode
-    $basic = false;
-    $mapPool = match ($mode) {
-      default => $mapsData->getBasicDuelMaps(),
-      'misc' => $mapsData->getMiscDuelMaps(), // unused/unreachable
-    };
-
+    // Cache the pool once so we don’t search twice
+    $mapPool = $mapsData->getMapPoolFromMode($mode);
     if ($mapPool === null) {
       $user->sendMessage(TextFormat::RED . "No maps available for this mode.");
       return;
     }
 
-    // if addresses of the picked map pool and basic map pool are the same, then set basic flag to true
-    if ($mapPool === $mapsData->getBasicDuelMaps()) $basic = true;
+    self::sendMapSelectForm
+    (
+      $names,
+      // onPick
+      function (string $base) use ($user, $invited, $mode, $mapPool) {
+        $selectedMap = $mapPool->getFirstInactiveMapByBaseName($base);
+        if ($selectedMap !== null) {
+          $invited->getInvites()?->duelInvitePlayer($user, $mode, $base);
+        } else {
+          $user->sendMessage(TextFormat::RED . "ERROR: Try again later. No available map found for " . $base);
+        }
+      },
+      // onRandom
+      function () use ($user, $invited, $mode) {
+        $invited->getInvites()?->duelInvitePlayer($user, $mode);
+      },
+      $user
+    );
+  }
 
-    // Get the unique map base names
-    $uniqueMapNames = $mapPool->getUniqueMapBaseNames();
-    // if we are basic, that means we are using misc maps as well
-    if ($basic) {
-      $misc = $mapsData->getMiscDuelMaps();
-      $uniqueMiscNames = $misc->getUniqueMapBaseNames();
-      // push back into the array to combine
-      foreach ($uniqueMiscNames as $name) $uniqueMapNames[] = $name;
+  /** Merge unique map base names for a mode (adds misc when using basic pool). */
+  public static function collectUniqueMapNames(MapsData $mapsData, string $mode): array
+  {
+    $mapPool = $mapsData->getMapPoolFromMode($mode);
+    if ($mapPool === null) {
+      return [];
     }
 
-    if (empty($uniqueMapNames)) {
-      $user->sendMessage(TextFormat::RED . "No maps available for this mode.");
+    // Base names from the mode's pool
+    $unique = $mapPool->getUniqueMapBaseNames();
+
+    // If using basic pool, append misc pool names
+    if ($mapPool === $mapsData->getBasicDuelMaps()) {
+      $misc = $mapsData->getMiscDuelMaps();
+      foreach ($misc->getUniqueMapBaseNames() as $name) {
+        $unique[] = $name;
+      }
+    }
+
+    return $unique;
+  }
+
+  /**
+   * Build and send a "Select a Map" form.
+   * - $names: list of base names in button order
+   * - $onPick(string $baseName): void              // user picked a specific map
+   * - $onRandom(): void                            // user chose Random (or invalid index)
+   * - $to: SwimPlayer who receives the form
+   */
+  public static function sendMapSelectForm(array $names, callable $onPick, callable $onRandom, SwimPlayer $to): void
+  {
+    if (empty($names)) {
+      $to->sendMessage(TextFormat::RED . "No maps available for this mode.");
       return;
     }
 
-    // Prepare the map selection form
-    $form = new SimpleForm(function (SwimPlayer $player, $data) use ($core, $invited, $mode, $mapPool, $uniqueMapNames) {
-      if ($data === null) return; // Form closed or no input
+    $form = new SimpleForm(function (SwimPlayer $player, $data) use ($onPick, $onRandom) {
+      if ($data === null) return; // closed
 
-      if (isset($uniqueMapNames[$data])) {
-        // Get the first inactive map that starts with the selected base name
-        $selectedBaseName = $uniqueMapNames[$data];
-        $selectedMap = $mapPool->getFirstInactiveMapByBaseName($selectedBaseName);
-        if ($selectedMap !== null) {
-          $invited->getInvites()->duelInvitePlayer($player, $mode, $selectedBaseName);
-        } else {
-          $player->sendMessage(TextFormat::RED . "ERROR: Try again later. No available map found for " . $selectedBaseName);
-        }
-      } else {
-        // If no map is selected, default to 'random'
-        $invited->getInvites()->duelInvitePlayer($player, $mode);
+      // $data is the label we set below (string), thanks to processData()
+      if ($data === 'random') {
+        $onRandom();
+        return;
       }
+
+      // otherwise it's a base name
+      $onPick((string)$data);
     });
 
-    // Add the "random" button as the first option
     $form->setTitle(TextFormat::DARK_GREEN . "Select a Map");
-    $form->addButton(TextFormat::DARK_GREEN . "Random", 0, "", "random");
+    // Random first
+    $form->addButton(TextFormat::DARK_GREEN . "Random", 0, "", "random"); // you can label buttons as strings
 
-    // Add buttons for each unique map base name
-    foreach ($uniqueMapNames as $index => $baseName) {
-      $form->addButton(TextFormat::DARK_RED . ucfirst($baseName), 0, "", $index);
+    foreach ($names as $baseName) {
+      $label = TextFormat::DARK_RED . ucfirst($baseName);
+      $form->addButton($label, 0, "", $baseName);
     }
 
-    // Send the form to the user
-    $user->sendForm($form);
+    $to->sendForm($form);
+  }
+
+  /**
+   * @param SimpleForm $form
+   * @param array $buttons
+   * @param SwimPlayer $player
+   * @return array
+   */
+  public static function buildDuelFormWithButtons(SimpleForm $form, array $buttons, SwimPlayer $player): array
+  {
+    $form->setTitle(TextFormat::GREEN . "Select Game");
+
+    // Build buttons from Duel::$MODES (assoc: mode => DuelInfo) in JSON order
+    foreach (Duel::$MODES as $val) {
+      if (!$val->enabled) continue;
+
+      $modeName = $val->modeName;
+      $decor = $val->decoratedName ?: ('§4' . ucfirst($modeName));
+      $icon = class_exists($val->classPath) ? $val->classPath::getIcon() : null;
+
+      $form->addButton($decor, 0, $icon);
+      $buttons[] = $modeName; // index -> mode
+    }
+
+    $player->sendForm($form);
+    return $buttons;
   }
 
 }

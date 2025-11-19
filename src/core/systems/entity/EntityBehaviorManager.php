@@ -34,7 +34,16 @@ class EntityBehaviorManager
     if (empty($this->behaviorMap)) return;
     foreach ($this->behaviorMap as $component) {
       $component->init();
+      $component->setInited(true);
       if (SwimCore::$DEBUG) echo("Component initing: " . $this->parent->getNameTag() . "\n");
+    }
+  }
+
+  private function initCheck(Behavior $behavior): void
+  {
+    if (!$behavior->hasInited()) {
+      $behavior->init();
+      $behavior->setInited(true);
     }
   }
 
@@ -42,6 +51,7 @@ class EntityBehaviorManager
   {
     if (empty($this->behaviorMap)) return;
     foreach ($this->behaviorMap as $component) {
+      $this->initCheck($component);
       $component->updateSecond();
     }
   }
@@ -50,6 +60,7 @@ class EntityBehaviorManager
   {
     if (empty($this->behaviorMap)) return;
     foreach ($this->behaviorMap as $component) {
+      $this->initCheck($component);
       $component->updateTick();
     }
   }
@@ -76,6 +87,13 @@ class EntityBehaviorManager
   public function getBehavior(string $name): ?Behavior
   {
     return $this->behaviorMap[$name] ?? null;
+  }
+
+  public function eventMessage(string $message, ...$args): void
+  {
+    foreach($this->behaviorMap as $component) {
+      $component->eventMessage($message, ...$args);
+    }
   }
 
 }

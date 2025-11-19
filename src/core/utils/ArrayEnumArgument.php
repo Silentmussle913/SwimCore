@@ -4,11 +4,11 @@ namespace core\utils;
 
 use CortexPE\Commando\args\BaseArgument;
 use pocketmine\command\CommandSender;
-use pocketmine\network\mcpe\protocol\types\command\CommandEnum;
+use pocketmine\network\mcpe\protocol\types\command\CommandHardEnum;
+use pocketmine\network\mcpe\protocol\types\command\CommandParameter;
 
 class ArrayEnumArgument extends BaseArgument
 {
-
   protected array $values = [];
   private string $typeName;
   private bool $check = true;
@@ -16,15 +16,16 @@ class ArrayEnumArgument extends BaseArgument
   public function __construct(string $name, array $values, bool $optional = false, bool $check = true, string $typeName = "")
   {
     parent::__construct($name, $optional);
+    $values = array_map('strval', $values);
     $this->values = array_combine(array_map('strtolower', $values), $values);
     $this->typeName = ($typeName === "") ? ucfirst($name) : $typeName;
     $this->check = $check;
-    $this->parameterData->enum = new CommandEnum($this->getTypeName(), $this->getEnumValues());
+    $this->parameterData = CommandParameter::enum($name, new CommandHardEnum($this->getTypeName(), array_map('strval', $this->getEnumValues())), 0, $optional);
   }
 
   public function getNetworkType(): int
   {
-    // this will be disregarded by PM anyways because this will be considered as a string enum
+    // this will be disregarded by PM anyway because this will be considered as a string enum
     return -1;
   }
 
@@ -35,10 +36,7 @@ class ArrayEnumArgument extends BaseArgument
 
   public function canParse(string $testString, CommandSender $sender): bool
   {
-    return !$this->check || (bool)preg_match(
-        "/^(" . implode("|", array_map("\\strtolower", $this->getEnumValues())) . ")$/iu",
-        $testString
-      );
+    return !$this->check || isset($this->values[strtolower($testString)]);
   }
 
   public function getValue(string $string)

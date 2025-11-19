@@ -14,7 +14,6 @@ use pocketmine\command\CommandSender;
 use pocketmine\utils\TextFormat;
 use ReflectionClass;
 
-// an in game memory viewer and editor via server forms. If you know what's good for you, only use this in debug environments.
 class SwimCoreEditor extends BaseCommand
 {
 
@@ -200,7 +199,7 @@ class SwimCoreEditor extends BaseCommand
       return;
     }
 
-    $form = new CustomForm(function (SwimPlayer $player, array $data = null) use ($primitiveProperties, $object) {
+    $form = new CustomForm(function (SwimPlayer $player, ?array $data = null) use ($primitiveProperties, $object) {
       if ($data === null) {
         return;
       }
@@ -485,7 +484,7 @@ class SwimCoreEditor extends BaseCommand
   {
     $value = $array[$key];
 
-    $form = new CustomForm(function (SwimPlayer $player, array $data = null) use (&$array, $key) {
+    $form = new CustomForm(function (SwimPlayer $player, ?array $data = null) use (&$array, $key) {
       if ($data === null) {
         return;
       }
@@ -537,6 +536,11 @@ class SwimCoreEditor extends BaseCommand
     $form->addInput("Value", $stringValue, $stringValue);
 
     $swimPlayer->sendForm($form);
+  }
+
+  public function getPermission(): ?string
+  {
+    return "use.op";
   }
 
 }

@@ -83,7 +83,6 @@ class ConfigMapper
 
   private static function loopProperties(ReflectionClass $reflectionClass, callable $cb): void
   {
-    /** @var ReflectionProperty[] */
     $props = $reflectionClass->getProperties();
     foreach ($props as $prop) {
       $confName = $prop->getName();

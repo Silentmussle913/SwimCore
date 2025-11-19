@@ -6,12 +6,12 @@ use core\communicator\packet\PacketSerializer;
 
 class Embed
 {
-  public const TYPE_RICH = "rich";
-  public const TYPE_IMAGE = "image";
-  public const TYPE_VIDEO = "video";
-  public const TYPE_GIFV = "gifv";
-  public const TYPE_ARTICLE = "article";
-  public const TYPE_LINK = "link";
+  public const  TYPE_RICH = "rich";
+  public const  TYPE_IMAGE = "image";
+  public const  TYPE_VIDEO = "video";
+  public const  TYPE_GIFV = "gifv";
+  public const  TYPE_ARTICLE = "article";
+  public const  TYPE_LINK = "link";
 
   /**
    * @param Field[] $fields

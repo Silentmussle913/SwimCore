@@ -7,7 +7,7 @@ use core\communicator\Communicator;
 
 class DiscordUserResponsePacket extends Packet
 {
-  public const NETWORK_ID = PacketId::DISCORD_USER_RESPONSE;
+  public const  NETWORK_ID = PacketId::DISCORD_USER_RESPONSE;
 
   public string $requestId;
   public string $error;

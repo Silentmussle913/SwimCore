@@ -4,6 +4,7 @@ namespace core\systems\player\components;
 
 use core\custom\behaviors\player_event_behaviors\ParticleEmitter;
 use core\database\SwimDB;
+use core\SwimCore;
 use core\systems\player\Component;
 use core\systems\player\SwimPlayer;
 use Generator;
@@ -11,7 +12,6 @@ use pocketmine\utils\TextFormat;
 use poggit\libasynql\libs\SOFe\AwaitGenerator\Await;
 use poggit\libasynql\SqlThread;
 
-// mostly just examples of stuff, not fully used beyond from helper format messages for chat and rank strings
 class Cosmetics extends Component
 {
 
@@ -37,7 +37,7 @@ class Cosmetics extends Component
     if ($this->tag == "" || $this->swimPlayer->getNicks()->isNicked()) return "";
 
     $spacer = $space ? " " : "";
-    return $spacer . TextFormat::GRAY . "[" . TextFormat::RESET . $this->tag . TextFormat::GRAY . "]";
+    return $spacer . TextFormat::GRAY . "[" . TextFormat::RESET . $this->tag . TextFormat::RESET . TextFormat::GRAY . "]";
   }
 
   // maybe name color shouldn't be bound to rank, but be a settable cosmetic
@@ -52,7 +52,7 @@ class Cosmetics extends Component
   public function tagNameTag(): void
   {
     if ($this->tag != "" && !$this->swimPlayer->getNicks()->isNicked()) {
-      $this->swimPlayer->setNameTag(TextFormat::GRAY . "[" . $this->tag . TextFormat::GRAY . "] " . $this->getNameColor() . $this->swimPlayer->getName());
+      $this->swimPlayer->setNameTag(TextFormat::GRAY . "[" . TextFormat::RESET . $this->tag . TextFormat::RESET . TextFormat::GRAY . "] " . $this->getNameColor() . $this->swimPlayer->getName());
     } else {
       $this->swimPlayer->setNameTag($this->getNameColor() . $this->swimPlayer->getNicks()->getNick());
     }
@@ -91,7 +91,7 @@ class Cosmetics extends Component
 
   public function shouldSendKillMessage(): bool
   {
-    return !$this->swimPlayer->getNicks()->isNicked() && $this->killMessage !== "{you} killed {other}";
+    return !$this->swimPlayer->getNicks()?->isNicked() && $this->killMessage !== "{you} killed {other}";
   }
 
   public function getChatFormat(): string
@@ -124,7 +124,8 @@ class Cosmetics extends Component
     $this->hubParticleEffect = $effect;
     $manager = $this->swimPlayer->getEventBehaviorComponentManager();
     $manager->removeComponent("particleEmitter");
-    if ($this->hubParticleEffect != "") {
+    // Only custom PocketMine fork has Protocol Particles for what we want
+    if (SwimCore::$isNetherGames && $this->hubParticleEffect != "") {
       $manager->registerComponent(new ParticleEmitter($this->core, $this->swimPlayer));
     }
   }

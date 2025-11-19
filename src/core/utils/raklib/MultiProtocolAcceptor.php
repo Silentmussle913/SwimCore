@@ -11,7 +11,7 @@ class MultiProtocolAcceptor implements ProtocolAcceptor
   /**
    * @param int[] $protocolVersions
    */
-  public function __construct(private readonly int $primaryVersion, private readonly array $protocolVersions)
+  public function __construct(private int $primaryVersion, private array $protocolVersions)
   {
   }
 

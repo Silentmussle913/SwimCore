@@ -58,7 +58,7 @@ class Communicator
     $sleeperEntry = $core->getServer()->getTickSleeper()->addNotifier(function (): void {
       $buf = $this->pthreadReader->read();
       try {
-        $this->decoder->decodeFromString($buf, $this);
+        $this->decoder->decodeFromStringCommunicator($buf, $this);
       } catch (PacketDecodeException $e) {
         $this->core->getLogger()->error($e->getMessage());
       }

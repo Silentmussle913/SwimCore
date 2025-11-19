@@ -19,6 +19,8 @@ class ChatHandler extends Component
   private string $muteReason;
   private int $unmuteTime;
   private string $lastMessagedPlayerName = '';
+  private string $lastMessage = "";
+  private int $lastMessageSentTick = 0;
 
   private static string $adMsg = TextFormat::DARK_AQUA . "Buy a rank on " .
   TextFormat::AQUA . "swim.tebex.io" .
@@ -86,11 +88,30 @@ class ChatHandler extends Component
 
   public function handleChat(string $message): void
   {
-    if ($this->rank->getRankLevel() <= Rank::DEFAULT_RANK && strlen($message) > 80) {
+    $tick = $this->core->getServer()->getTick();
+    $noRank = $this->rank->getRankLevel() <= Rank::DEFAULT_RANK;
+
+    if ($noRank && ($tick - $this->lastMessageSentTick < TimeHelper::secondsToTicks(1))) {
+      $this->swimPlayer->sendMessage(TextFormat::RED . "Slow down on the messages buddy!");
+      $this->swimPlayer->sendMessage(self::$adMsg);
+      return;
+    }
+
+    if ($noRank && strlen($message) > 80) {
       $this->swimPlayer->sendMessage(TextFormat::RED . "Your message is too long (over 80 characters)");
       $this->swimPlayer->sendMessage(self::$adMsg);
       return;
     }
+
+    if ($noRank && $this->lastMessage === $message) {
+      $this->swimPlayer->sendMessage(TextFormat::RED . "You already sent this message!");
+      $this->swimPlayer->sendMessage(self::$adMsg);
+      return;
+    }
+
+    // update deltas
+    $this->lastMessageSentTick = $this->core->getServer()->getTick();
+    $this->lastMessage = $message;
 
     if (FilterHelper::chatFilter($message)) {
       $this->sendFormattedMessage($message, false);

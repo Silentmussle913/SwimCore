@@ -28,6 +28,17 @@ use ReflectionException;
 use ReflectionMethod;
 use ReflectionProperty;
 
+use function abs;
+use function array_values;
+use function assert;
+use function max;
+use function microtime;
+use function min;
+use function mt_rand;
+use function ord;
+use function random_int;
+use const PHP_INT_MAX;
+
 class SwimServerSession extends ServerSession
 {
 
@@ -51,6 +62,9 @@ class SwimServerSession extends ServerSession
   private int $cookie;
   private int $mtuSize;
 
+  /**
+   * @throws ReflectionException
+   */
   public function __construct(
     private Server  $server,
     Logger          $logger,
@@ -62,7 +76,8 @@ class SwimServerSession extends ServerSession
     int             $recvMaxConcurrentSplits = self::DEFAULT_MAX_CONCURRENT_SPLIT_COUNT
   )
   {
-    if (!isset(self::$recvLayer) || !isset(self::$sendLayer) || !isset(self::$handlePong) || !isset(self::$handleRemoteDisconnect) || !isset(self::$sendLayerMtu) || !isset(self::$sendLayerMaxDatagram)) {
+    if (!isset(self::$recvLayer) || !isset(self::$sendLayer) || !isset(self::$handlePong)
+      || !isset(self::$handleRemoteDisconnect) || !isset(self::$sendLayerMtu) || !isset(self::$sendLayerMaxDatagram)) {
       $refl = new ReflectionClass(Session::class);
       self::$sendLayer = $refl->getProperty("sendLayer");
       self::$sendLayerMtu = (new ReflectionClass(SendReliabilityLayer::class))->getProperty("mtuSize");
@@ -116,7 +131,12 @@ class SwimServerSession extends ServerSession
     $this->adjustWindow($highestSeqNumber, $windowStart, $windowEnd);
   }
 
-  public function adjustWindow(int $highestSeqNumber, int $windowStart, int $windowEnd)
+  public function getMTUSize(): int
+  {
+    return $this->mtuSize;
+  }
+
+  public function adjustWindow(int $highestSeqNumber, int $windowStart, int $windowEnd): void
   {
     $diff = max(-1, $highestSeqNumber - ReceiveReliabilityLayer::$WINDOW_SIZE / 4) - $windowStart + 1;
     assert($diff >= 0);
@@ -167,7 +187,9 @@ class SwimServerSession extends ServerSession
       }
       //var_dump($dataPacket);
       //var_dump($this->cookie);
-      if ($dataPacket->address->getPort() === $this->server->getPort() or !$this->server->portChecking) {
+
+      // why was divinity using 'or' here instead of '||' ?
+      if ($dataPacket->address->getPort() === $this->server->getPort() || !$this->server->portChecking) {
         $this->state = Session::STATE_CONNECTED; //FINALLY!
         $this->server->openSession($this);
 
@@ -204,9 +226,9 @@ class SwimServerSession extends ServerSession
       }
     } elseif ($this->state === Session::STATE_CONNECTED) {
       $this->onPacketReceive($packet->buffer);
-    } else {
-      //$this->logger->notice("Received packet before connection: " . bin2hex($packet->buffer));
-    }
+    }/* else {
+      echo("Received packet before connection: " . bin2hex($packet->buffer) . "\n");
+    }*/
   }
 
   public array $recv = [];
@@ -216,13 +238,13 @@ class SwimServerSession extends ServerSession
   private int $spoofJitter = 0;
   private int $totalSpoof = 0;
 
-  public function setSpoofAmt(int $spoofAmt)
+  public function setSpoofAmt(int $spoofAmt): void
   {
     $this->spoofAmt = $spoofAmt;
     $this->totalSpoof = $spoofAmt;
   }
 
-  public function setSpoofJitter(int $spoofJitter)
+  public function setSpoofJitter(int $spoofJitter): void
   {
     $this->spoofJitter = $spoofJitter;
     $this->totalSpoof = $this->spoofAmt;
@@ -271,20 +293,24 @@ class SwimServerSession extends ServerSession
     $this->recv[] = [$time, $packet];
   }
 
-  public function removeSendEntry(int $index)
+  public function removeSendEntry(int $index): void
   {
     unset($this->send[$index]);
   }
 
-  public function removeRecvEntry(int $index)
+  public function removeRecvEntry(int $index): void
   {
     unset($this->recv[$index]);
   }
 
   public function cleanEntries(bool $sendEntries, bool $recvEntries): void
   {
-    if ($sendEntries) $this->send = array_values($this->send);
-    if ($recvEntries) $this->recv = array_values($this->recv);
+    if ($sendEntries) {
+      $this->send = array_values($this->send);
+    }
+    if ($recvEntries) {
+      $this->recv = array_values($this->recv);
+    }
   }
 
 }

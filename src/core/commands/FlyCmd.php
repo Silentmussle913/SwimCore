@@ -49,4 +49,9 @@ class FlyCmd extends Command
     return true;
   }
 
+  public function getPermission(): ?string
+  {
+    return "use.all";
+  }
+
 }

@@ -4,7 +4,7 @@ namespace core\communicator\packet;
 
 class ServerInfoPacket extends Packet
 {
-  public const NETWORK_ID = PacketId::SERVER_INFO;
+  public const  NETWORK_ID = PacketId::SERVER_INFO;
 
   public string $regionName;
 
@@ -17,4 +17,5 @@ class ServerInfoPacket extends Packet
   {
     $serializer->putString($this->regionName);
   }
+
 }

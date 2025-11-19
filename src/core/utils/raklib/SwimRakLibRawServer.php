@@ -4,6 +4,8 @@ namespace core\utils\raklib;
 
 use DateTime;
 use Logger;
+
+use raklib\generic\PacketHandlingException as RaklibPacketHandlingException;
 use pocketmine\utils\BinaryDataException;
 use raklib\generic\DisconnectReason;
 use raklib\generic\SocketException;
@@ -22,6 +24,20 @@ use raklib\utils\ExceptionTraceCleaner;
 use raklib\utils\InternetAddress;
 use ReflectionException;
 use ReflectionMethod;
+
+use function asort;
+use function bin2hex;
+use function count;
+use function microtime;
+use function morton2d_decode;
+use function ord;
+use function preg_match;
+use function str_contains;
+use function strlen;
+use function time;
+use function time_sleep_until;
+use const PHP_INT_MAX;
+use const SOCKET_ECONNRESET;
 
 class SwimRakLibRawServer extends Server
 {
@@ -52,7 +68,17 @@ class SwimRakLibRawServer extends Server
   /**
    * @throws ReflectionException
    */
-  public function __construct(int $serverId, Logger $logger, ServerSocket $socket, int $maxMtuSize, ProtocolAcceptor $protocolAcceptor, ServerEventSource $eventSource, ServerEventListener $eventListener, ExceptionTraceCleaner $traceCleaner)
+  public function __construct
+  (
+    int                   $serverId,
+    Logger                $logger,
+    ServerSocket          $socket,
+    int                   $maxMtuSize,
+    ProtocolAcceptor      $protocolAcceptor,
+    ServerEventSource     $eventSource,
+    ServerEventListener   $eventListener,
+    ExceptionTraceCleaner $traceCleaner
+  )
   {
     $this->eventSource = $eventSource;
     $this->eventListener = $eventListener;
@@ -65,6 +91,9 @@ class SwimRakLibRawServer extends Server
     $this->ipHeaderSize = str_contains($socket->getBindAddress()->getIp(), ":") ? 40 : 20;
   }
 
+  /**
+   * @throws ReflectionException
+   */
   public function tickProcessor(): void
   {
     $start = microtime(true);
@@ -98,6 +127,9 @@ class SwimRakLibRawServer extends Server
     return $this->shutdown;
   }
 
+  /**
+   * @throws ReflectionException
+   */
   public function waitShutdown(): void
   {
     $shutdownStart = microtime(true) * 1000;
@@ -131,19 +163,50 @@ class SwimRakLibRawServer extends Server
     $this->logger->debug("Graceful shutdown complete");
   }
 
+  /**
+   * Runs once per RakLib tick (1 kHz).
+   * - Flushes delayed *send* / *recv* entries for every session
+   * - Ticks session state machines
+   * - Handles bandwidth stats, IP-block expiry, DDOS state, etc.
+   * @throws ReflectionException
+   */
   private function tick(): void
   {
     $time = microtime(true);
+
+    /* -----------------------------------------------------------------
+     * 1) Per-session maintenance
+     * ----------------------------------------------------------------- */
     foreach ($this->sessions as $session) {
       $cleanRecv = false;
       $cleanSend = false;
+
+      /* ---------- Process queued *received* packets ---------- */
       foreach ($session->getRecvEntries() as $e => $pk) {
         if ($pk[0] < $time) {
           $cleanRecv = true;
-          $session->handlePacket($pk[1]);
+
+          /*  new fix to quarantine malformed split-packets here too  */
+          try {
+            $session->handlePacket($pk[1]);
+          } catch (RaklibPacketHandlingException $ex) {
+            /* Same mitigation path we use in receivePacket() */
+            $this->logger->warning(
+              "Dropped {$session->getAddress()->toString()} – {$ex->getMessage()}"
+            );
+            $this->blockAddress($session->getAddress()->getIp(), 60, true);
+            $session->forciblyDisconnect(DisconnectReason::SPLIT_PACKET_TOO_LARGE);
+
+            /* Skip post-processing for this entry */
+            $session->removeRecvEntry($e);
+            continue; /* to next queued packet */
+          }
+
           $session->removeRecvEntry($e);
         }
       }
+
+      /* ---------- Process queued *outgoing* packets ---------- */
       foreach ($session->getSendEntries() as $e => $pk) {
         if ($pk[0] < $time) {
           $cleanSend = true;
@@ -151,17 +214,29 @@ class SwimRakLibRawServer extends Server
           $session->removeSendEntry($e);
         }
       }
+
+      /* ---------- Clean dead queues & update session ---------- */
       $session->cleanEntries($cleanSend, $cleanRecv);
       $session->update($time);
+
+      /* ---------- Remove fully-disconnected sessions ---------- */
       if ($session->isFullyDisconnected()) {
         $this->removeSessionInternal->invokeArgs($this, [$session]);
       }
     }
 
-    if ($this->ticks % (self::RAKLIB_TPS / 10) == 0)
+    /* -----------------------------------------------------------------
+     * 2) Global per-tick / per-second maintenance
+     * ----------------------------------------------------------------- */
+    if ($this->ticks % (self::RAKLIB_TPS / 10) == 0) {
       $this->ipSec = [];
+    }
     if ($this->ticks % (self::RAKLIB_TPS * self::PPS_CLEAR_INTERVAL) == 0) {
-      if ($this->isBeingDdosed && time() - $this->lastBlockTime > 20 && $this->unconnectedPps * 2 < self::ACTUAL_MAX_UNCONNECTED_PPS) {
+      if (
+        $this->isBeingDdosed &&
+        time() - $this->lastBlockTime > 20 &&
+        $this->unconnectedPps * 2 < self::ACTUAL_MAX_UNCONNECTED_PPS
+      ) {
         $this->unconnectedMessageHandler->trustedAddresses = [];
         $this->isBeingDdosed = false;
         $this->eventListener->onPacketReceive(-69420, "ddosEnd");
@@ -172,6 +247,9 @@ class SwimRakLibRawServer extends Server
       $this->unconnectedPps = 0;
     }
 
+    /* -----------------------------------------------------------------
+     * 3) Once-per-second maintenance (bandwidth stats + IP block expiry)
+     * ----------------------------------------------------------------- */
     if (!$this->shutdown && ($this->ticks % self::RAKLIB_TPS) === 0) {
       if ($this->sendBytes > 0 || $this->receiveBytes > 0) {
         $this->eventListener->onBandwidthStatsUpdate($this->sendBytes, $this->receiveBytes);
@@ -197,7 +275,6 @@ class SwimRakLibRawServer extends Server
 
   public function sendPacket(Packet $packet, InternetAddress $address): void
   {
-    /** @var ?SwimServerSession */
     $session = $this->getSessionByAddress($address);
     if (!$session || $session->getSpoofAmt() == 0) {
       $this->sendPacketInternal($packet, $address);
@@ -217,27 +294,48 @@ class SwimRakLibRawServer extends Server
     }
   }
 
+  /**
+   * Reads one UDP datagram from the bound socket, performs basic
+   * anti-abuse checks, and hands the decoded Datagram/ACK/NACK to the
+   * appropriate Session. Malformed split-packets that trigger a
+   * PacketHandlingException will now be safely quarantined instead of
+   * crashing the RakLib thread.
+   *
+   * @return bool  True  => continue polling socket
+   *               False => no more data available
+   * @throws ReflectionException
+   */
   private function receivePacket(): bool
   {
+    /* ----------------------------------------------------------
+     * 1) Read raw datagram from the socket
+     * ---------------------------------------------------------- */
     try {
       $buffer = $this->socket->readPacket($addressIp, $addressPort);
     } catch (SocketException $e) {
       $error = $e->getCode();
-      if ($error === SOCKET_ECONNRESET) { //client disconnected improperly, maybe crash or lost connection
-        return true;
+
+      /* ECONNRESET => harmless client crash or NAT time-out */
+      if ($error === SOCKET_ECONNRESET) {
+        return true; /* keep looping */
       }
 
       $this->logger->debug($e->getMessage());
-      return false;
+      return false; /* give caller chance to poll other sources */
     }
-    if ($buffer === null) {
-      return false; //no data
-    }
-    $len = strlen($buffer);
 
+    if ($buffer === null) {
+      return false; /* nothing pending on socket */
+    }
+
+    $len = strlen($buffer);
     $this->receiveBytes += $len;
+
+    /* ----------------------------------------------------------
+     * 2) Quick-exit checks: blocked IP / packet flood guard
+     * ---------------------------------------------------------- */
     if (isset($this->block[$addressIp])) {
-      return true;
+      return true; /* ignore but carry on polling */
     }
 
     if (isset($this->ipSec[$addressIp])) {
@@ -250,16 +348,26 @@ class SwimRakLibRawServer extends Server
     }
 
     if ($len < 1) {
-      return true;
+      return true; /* stray empty datagram */
     }
 
-    $address = new InternetAddress($addressIp, $addressPort, $this->socket->getBindAddress()->getVersion());
+    /* ----------------------------------------------------------
+     * 3) Hand off to the correct Session (or unconnected handler)
+     * ---------------------------------------------------------- */
+    $address = new InternetAddress(
+      $addressIp,
+      $addressPort,
+      $this->socket->getBindAddress()->getVersion()
+    );
+
     try {
       $session = $this->getSessionByAddress($address);
       if ($session !== null) {
         /** @var SwimServerSession $session */
         $header = ord($buffer[0]);
+
         if (($header & Datagram::BITFLAG_VALID) !== 0) {
+          /* Decode Datagram / ACK / NACK -------------------------------- */
           if (($header & Datagram::BITFLAG_ACK) !== 0) {
             $packet = new ACK();
           } elseif (($header & Datagram::BITFLAG_NAK) !== 0) {
@@ -268,47 +376,97 @@ class SwimRakLibRawServer extends Server
             $packet = new Datagram();
           }
           $packet->decode(new PacketSerializer($buffer));
-          if ($session->getSpoofAmt() == 0) {
-            $session->handlePacket($packet);
-          } else {
-            $session->addRecvEntry(microtime(true) + $session->getTotalSpoofAmt(), $packet);
+
+          // Critical packet splitting check with try catch
+          try {
+            if ($session->getSpoofAmt() === 0) {
+              $session->handlePacket($packet);
+            } else {
+              $session->addRecvEntry(
+                microtime(true) + $session->getTotalSpoofAmt(),
+                $packet
+              );
+            }
+          } catch (RaklibPacketHandlingException $ex) {
+            /* The client sent a malformed or malicious split-packet.
+             * 1) Log it
+             * 2) Temp-ban the IP for 60 s, mark as DDOS so limits tighten
+             * 3) Forcibly disconnect the session
+             * 4) Swallow the exception so the RakLib thread survives
+             */
+            $this->logger->warning(
+              "Dropped {$address->toString()} – " . $ex->getMessage()
+            );
+
+            $this->blockAddress($address->getIp(), 60, true);
+            $session->forciblyDisconnect(
+              DisconnectReason::SPLIT_PACKET_TOO_LARGE
+            );
+
+            return true; /* continue processing other packets */
           }
-          return true;
-        } elseif ($session->isConnected()) {
-          //allows unconnected packets if the session is stuck in DISCONNECTING state, useful if the client
-          //didn't disconnect properly for some reason (e.g. crash)
-          $this->logger->debug("Ignored unconnected packet from $address due to session already opened (0x" . bin2hex($buffer[0]) . ")");
+
+          return true; /* session handled successfully */
+        }
+
+        /* Unconnected datagram for an already-connected session --------- */
+        if ($session->isConnected()) {
+          $this->logger->debug(
+            "Ignored unconnected packet from $address (0x" .
+            bin2hex($buffer[0]) . ")"
+          );
           return true;
         }
       }
 
-      if (++$this->unconnectedPps > self::ACTUAL_MAX_UNCONNECTED_PPS && !$this->isBeingDdosed) {
+      /* ----------------------------------------------------------
+       * 4) Unconnected packet flow / anti-DDOS counters
+       * ---------------------------------------------------------- */
+      if (++$this->unconnectedPps > self::ACTUAL_MAX_UNCONNECTED_PPS
+        && !$this->isBeingDdosed) {
         $this->isBeingDdosed = true;
         $this->eventListener->onPacketReceive(-69420, "ddosStart");
       }
 
       if (!$this->shutdown) {
-        if (!($handled = $this->unconnectedMessageHandler->handleRaw($buffer, $address))) {
-          if (!$this->getIsBeingDdosed()) {
-            foreach ($this->rawPacketFilters as $pattern) {
-              if (preg_match($pattern, $buffer) > 0) {
-                $handled = true;
-                $this->eventListener->onRawPacketReceive($address->getIp(), $address->getPort(), $buffer);
-                break;
-              }
+        $handled = $this->unconnectedMessageHandler->handleRaw(
+          $buffer,
+          $address
+        );
+
+        if (!$handled && !$this->getIsBeingDdosed()) {
+          foreach ($this->rawPacketFilters as $pattern) {
+            if (preg_match($pattern, $buffer) > 0) {
+              $handled = true;
+              $this->eventListener->onRawPacketReceive(
+                $address->getIp(),
+                $address->getPort(),
+                $buffer
+              );
+              break;
             }
           }
         }
 
         if (!$handled) {
-          $this->logger->debug("Ignored packet from $address due to no session opened (0x" . bin2hex($buffer[0]) . ")");
+          $this->logger->debug(
+            "Ignored packet from $address due to no session opened (0x" .
+            bin2hex($buffer[0]) . ")"
+          );
         }
       }
     } catch (BinaryDataException $e) {
+      /* Totally busted datagram – instant short ban */
       $this->blockAddress($address->getIp(), 5, true);
     }
 
-    return true;
+    return true; /* keep polling */
+  }
+
+  public function openSession(ServerSession $session): void
+  {
+    $address = $session->getAddress();
+    $this->eventListener->onClientConnect($session->getInternalId(), $address->getIp(), $address->getPort(), $session->getMTUSize());
   }
 
   public function blockAddress(string $address, int $timeout = 300, bool $ddos = false): void

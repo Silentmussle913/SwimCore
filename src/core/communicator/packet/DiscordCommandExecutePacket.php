@@ -8,7 +8,7 @@ use core\communicator\DiscordCommandSender;
 
 class DiscordCommandExecutePacket extends Packet
 {
-  public const NETWORK_ID = PacketId::DISCORD_COMMAND_EXECUTE;
+  public const  NETWORK_ID = PacketId::DISCORD_COMMAND_EXECUTE;
 
   public string $commandLine;
   public string $requestId;

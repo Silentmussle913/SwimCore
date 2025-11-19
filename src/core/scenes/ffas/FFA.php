@@ -3,13 +3,15 @@
 namespace core\scenes\ffas;
 
 use core\scenes\PvP;
-use core\systems\player\components\Rank;
 use core\systems\player\SwimPlayer;
+use core\systems\scene\FFAInfo;
 use core\utils\CoolAnimations;
 use core\utils\InventoryUtil;
+use core\utils\TimeHelper;
 use jackmd\scorefactory\ScoreFactory;
 use jackmd\scorefactory\ScoreFactoryException;
 use pocketmine\event\entity\EntityDamageByEntityEvent;
+use pocketmine\network\mcpe\protocol\types\entity\EntityIds;
 use pocketmine\player\GameMode;
 use pocketmine\scheduler\ClosureTask;
 use pocketmine\Server;
@@ -21,6 +23,10 @@ use pocketmine\world\Position;
  */
 abstract class FFA extends PvP
 {
+
+  public ?FFAInfo $info = null;
+
+  abstract public static function getIcon(): string;
 
   protected int $x;
   protected int $y;
@@ -55,6 +61,18 @@ abstract class FFA extends PvP
     $player->teleport($pos);
   }
 
+  public function cleanUpItemEntities(int $seconds): void {
+    // Kill all dropped item entities in the world that have been on the ground longer than N seconds
+    foreach ($this->world->getEntities() as $entity) {
+      if ($entity::getNetworkTypeId() === EntityIds::ITEM) {
+        if ($entity->ticksLived > TimeHelper::secondsToTicks($seconds)) {
+          $entity->kill();
+          $entity->flagForDespawn();
+        }
+      }
+    }
+  }
+
   // pvp mechanics
   public function sceneEntityDamageByEntityEvent(EntityDamageByEntityEvent $event, SwimPlayer $swimPlayer): void
   {
@@ -68,7 +86,7 @@ abstract class FFA extends PvP
       }
 
       // combat logger is used for this to prevent 3rd partying
-      $blocked = $attacker->getCombatLogger()->handleAttack($swimPlayer); // called anyway for the sake of logging
+      $blocked = $attacker->getCombatLogger()?->handleAttack($swimPlayer); // called anyway for the sake of logging
       if (!$this->interruptAllowed) {
         if (!$blocked) {
           $event->cancel();
@@ -102,14 +120,14 @@ abstract class FFA extends PvP
   protected function defaultDeathHandle(?SwimPlayer $attacker, SwimPlayer $victim, bool $explode = true, bool $useTeamColorForKillStreak = false): void
   {
     // cancel cool downs for the attacker since we just re-kitted them
-    if ($attacker) {
+    if ($attacker && $attacker->isOnline()) {
       $attacker->getCoolDowns()?->clearAll();
       $kills = $attacker->getAttributes()?->emplaceIncrementIntegerAttribute("kill streak") ?? 0; // update kill streak
       if ($kills >= 3) {
         if ($useTeamColorForKillStreak) {
           $color = $this->getPlayerTeam($attacker)?->getTeamColor() ?? "";
         } else {
-         $color = ($attacker->getCosmetics()?->getNameColor() ?? "");
+          $color = ($attacker->getCosmetics()?->getNameColor() ?? "");
         }
         $name = $color . ($attacker->getNicks()?->getNick() ?? $attacker->getName());
         $this->sceneAnnouncement($name . TextFormat::GREEN . " is on a " . $kills . " Kill Streak!");
@@ -141,6 +159,8 @@ abstract class FFA extends PvP
     } else {
       $this->restart($victim);
     }
+
+    $victim->getCombatLogger()?->setLastHitBy(null); // clear the attacker to remove the spawn tag
   }
 
   protected function ffaNameTag(SwimPlayer $player): void
@@ -149,8 +169,8 @@ abstract class FFA extends PvP
       $player->setNameTag(TextFormat::GRAY . $player->getNicks()->getNick());
     } else {
       $player->getCosmetics()->tagNameTag();
-      $color = Rank::getRankColor($player->getRank()->getRankLevel());
-      $player->setNameTag($color . $player->getName());
+      // $color = Rank::getRankColor($player->getRank()->getRankLevel());
+      // $player->setNameTag($color . $player->getName());
     }
   }
 
@@ -194,6 +214,21 @@ abstract class FFA extends PvP
         Server::getInstance()->getLogger()->info($e->getMessage());
       }
     }
+  }
+
+  protected function killMessage(SwimPlayer $attacker, SwimPlayer $victim): void
+  {
+    $attacker->getCosmetics()?->killMessageLogic($victim);
+
+    $attackerName = $attacker->getNicks()->getNick();
+    $attackerHP = round($attacker->getHealth() / 2, 1);
+    $attackerHealthString = " " . TextFormat::GRAY . "(" . TextFormat::RED . $attackerHP . " Hearts" . TextFormat::GRAY . ")";
+
+    $victimName = $victim->getNicks()->getNick();
+
+    $msg = TextFormat::GREEN . $attackerName . $attackerHealthString . TextFormat::YELLOW . " Killed " . TextFormat::RED . $victimName;
+
+    $this->sceneAnnouncement($msg);
   }
 
 }

@@ -20,6 +20,9 @@ use ReflectionException;
 class CustomItemLoader
 {
 
+  /**
+   * @throws ReflectionException
+   */
   public static function registerCustoms(): void
   {
     // not needed yet
@@ -111,6 +114,9 @@ class CustomItemLoader
 
   }
 
+  /**
+   * @throws ReflectionException
+   */
   private static function unregisterEducationItems(): void
   {
     foreach (StringToItemParser::getInstance()->getKnownAliases() as $item) {

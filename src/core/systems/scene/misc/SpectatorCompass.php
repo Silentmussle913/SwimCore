@@ -63,9 +63,11 @@ class SpectatorCompass extends Compass
     foreach ($players as $plr) {
       if ($plr instanceof SwimPlayer) {
         // skip self and spectators
-        if ($plr !== $player && $plr->getGamemode() !== GameMode::SPECTATOR && !$scene->getPlayerTeam($plr)?->isSpecTeam()) {
+        $team = $scene->getPlayerTeam($plr);
+        if ($plr !== $player && $plr->getGamemode() !== GameMode::SPECTATOR && !$team?->isSpecTeam()) {
           $buttons[] = $plr;
-          $form->addButton($plr->getRank()->rankString());
+          $color = $team?->getTeamColor() ?? TextFormat::DARK_GRAY;
+          $form->addButton($color . ($plr->getNicks()?->getNick() ?? $plr->getName()));
         }
       }
     }

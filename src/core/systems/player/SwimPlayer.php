@@ -2,6 +2,7 @@
 
 namespace core\systems\player;
 
+use CameraAPI\Instructions\ClearCameraInstruction;
 use core\SwimCore;
 use core\systems\player\components\AckHandler;
 use core\systems\player\components\AntiCheatData;
@@ -14,38 +15,52 @@ use core\systems\player\components\ClickHandler;
 use core\systems\player\components\CombatLogger;
 use core\systems\player\components\CoolDowns;
 use core\systems\player\components\Cosmetics;
+use core\systems\player\components\DiscordLinkHandler;
 use core\systems\player\components\Invites;
+use core\systems\player\components\Kits;
 use core\systems\player\components\NetworkStackLatencyHandler;
 use core\systems\player\components\Nicks;
 use core\systems\player\components\Rank;
 use core\systems\player\components\SceneHelper;
 use core\systems\player\components\Settings;
+use core\utils\BehaviorEventEnum;
 use core\utils\InventoryUtil;
 use core\utils\PositionHelper;
+use core\utils\security\IPParse;
 use core\utils\StackTracer;
 use jackmd\scorefactory\ScoreFactory;
 use jackmd\scorefactory\ScoreFactoryException;
-use JsonException;
 use pocketmine\block\BlockTypeIds;
 use pocketmine\block\BlockTypeTags;
 use pocketmine\block\VanillaBlocks;
 use pocketmine\entity\animation\ArmSwingAnimation;
-use pocketmine\entity\Entity;
+use pocketmine\entity\Location;
 use pocketmine\event\entity\EntityDamageEvent;
+use pocketmine\event\entity\EntityTeleportEvent;
 use pocketmine\event\Event;
 use pocketmine\event\player\PlayerInteractEvent;
 use pocketmine\lang\Translatable;
 use pocketmine\math\Vector3;
+use pocketmine\nbt\tag\CompoundTag;
+use pocketmine\network\mcpe\convert\TypeConverter;
 use pocketmine\network\mcpe\NetworkSession;
 use pocketmine\network\mcpe\protocol\BossEventPacket;
+use pocketmine\network\mcpe\protocol\MovePlayerPacket;
+use pocketmine\network\mcpe\protocol\PlayerSkinPacket;
 use pocketmine\network\mcpe\protocol\RemoveActorPacket;
 use pocketmine\network\mcpe\protocol\types\BossBarColor;
 use pocketmine\player\GameMode;
 use pocketmine\player\Player;
+use pocketmine\player\PlayerInfo;
+use pocketmine\scheduler\ClosureTask;
+use pocketmine\Server;
 use pocketmine\utils\TextFormat;
+use pocketmine\utils\Utils;
 use pocketmine\world\Position;
 use pocketmine\world\sound\FireExtinguishSound;
 use poggit\libasynql\libs\SOFe\AwaitGenerator\Await;
+use Ramsey\Uuid\Uuid;
+use Ramsey\Uuid\UuidInterface;
 use ReflectionClass;
 use ReflectionException;
 
@@ -80,18 +95,38 @@ class SwimPlayer extends Player
   private ?NetworkStackLatencyHandler $nslHandler = null;
   private ?Attributes $attributes = null;
   private ?CombatLogger $combatLogger = null;
+  private ?Kits $kits = null;
   private ?AckHandler $ackHandler = null;
   private ?Cosmetics $cosmetics = null;
+  private ?DiscordLinkHandler $linkHandler = null;
   private string $discordIdFromDb = "";
 
   private Vector3 $exactPosition;
-  private int $ticksSinceLastTeleport = 0;
+  public int $ticksSinceLastTeleport = 0;
   private int $ticksSinceLastMotionSet = 0;
   private int $ticksSinceLastGameModeChange = 0;
 
   private ?Position $previousPositionBeforeTeleport = null;
 
+  public bool $fishing = false;
+
   private bool $loaded = false;
+
+  private UuidInterface $randomUUID;
+
+  public function __construct
+  (
+    Server         $server,
+    NetworkSession $session,
+    PlayerInfo     $playerInfo,
+    bool           $authenticated,
+    Location       $spawnLocation,
+    ?CompoundTag   $namedtag
+  )
+  {
+    $this->randomUUID = Uuid::uuid4(); // to make sure this is set right away
+    parent::__construct($server, $session, $playerInfo, $authenticated, $spawnLocation, $namedtag);
+  }
 
   public function init(SwimCore $core): void
   {
@@ -136,11 +171,17 @@ class SwimPlayer extends Player
     $this->combatLogger = new CombatLogger($core, $this);
     $this->components['combatLogger'] = $this->combatLogger;
 
+    $this->kits = new Kits($core, $this);
+    $this->components['kits'] = $this->kits;
+
     $this->ackHandler = new AckHandler($core, $this, true);
     $this->components["ackHandler"] = $this->ackHandler;
 
     $this->cosmetics = new Cosmetics($core, $this);
-    $this->components['cosmetics'] = $this->cosmetics;
+    $this->components["cosmetics"] = $this->cosmetics;
+
+    $this->linkHandler = new DiscordLinkHandler($core, $this);
+    $this->components["discordLinkHandler"] = $this->linkHandler;
 
     // then init each component
     foreach ($this->components as $key => $component) {
@@ -151,6 +192,11 @@ class SwimPlayer extends Player
       }
       $component->init();
     }
+  }
+
+  public function getRandomUUID(): UuidInterface
+  {
+    return $this->randomUUID;
   }
 
   public function getBehaviorManager(): ?EventBehaviorComponentManager
@@ -165,7 +211,7 @@ class SwimPlayer extends Player
     }
   }
 
-  public function event(Event $event, int $eventEnum): void
+  public function event(Event $event, BehaviorEventEnum $eventEnum): void
   {
     if (isset($this->eventBehaviorComponentManager)) {
       $this->eventBehaviorComponentManager->event($event, $eventEnum);
@@ -247,18 +293,28 @@ class SwimPlayer extends Player
         yield from $this->settings->load();
       if ($this->isConnected())
         yield from $this->rank->load();
+      if ($this->isConnected())
+        yield from $this->kits->load();
+      if ($this->isConnected())
+        yield from $this->cosmetics->load();
+      if ($this->isConnected())
+        yield from $this->attributes->load();
       if ($this->isConnected()) {
         $this->loaded = true;
         $this->getSceneHelper()->setNewScene("Hub"); // once done loading data we can put the player into the hub scene
+        $this->sendMessage(TextFormat::GREEN . "Data Loaded!");
       }
     });
   }
 
-  // save player data (right now is only settings, this later would be Elo, kits, and so on)
+  // save player data
   public function saveData(): void
   {
     if ($this->loaded) {
       $this->settings?->saveSettings();
+      $this->kits?->saveKits();
+      $this->cosmetics?->saveData();
+      $this->attributes?->saveAttributes();
     }
   }
 
@@ -279,29 +335,128 @@ class SwimPlayer extends Player
     $this->antiCheatData?->teleported();
     $this->ticksSinceLastTeleport = 0;
 
-    // do it if changing worlds
-    $do = false;
-    if ($pos instanceof Position) {
-      $do = $this->previousPositionBeforeTeleport->world !== $pos->world;
+    // To avoid ghost players and messed up skins due to the flawed vanilla teleport logic, we have to do this routine:
+    if ($this->fixedVanillaTeleport($pos, $yaw, $pitch)) {
+      $this->betterBlockBreaker = null;
+      $this->core->getScheduler()->scheduleDelayedTask(
+        new ClosureTask(function (): void {
+          if ($this->isConnected()) {
+            $this->sendSkin();
+          }
+        }),
+        2  // 2-tick delay (is this enough??? Very race condition bound based on higher ping players > 100 ms)
+      );
+
+      // Retrieve all skins in the world from players near us, because apparently this isn't a thing PocketMine does for us correctly???
+      // This could really hurt perf on the client, we at least do get viewers for position, which may or may not be sufficient.
+      $world = $this->getWorld(); // initially just whatever world we are already in
+      if ($pos instanceof Position) {
+        $world = $pos->getWorld(); // new world since we are actually going to a new position instead of just a Vector3
+      }
+
+      $players = $world->getViewersForPosition($pos);
+
+      // Make it send all the player skins in batch to the recipients' client.
+      if (Swimcore::$isNetherGames) {
+        TypeConverter::broadcastByTypeConverter([$this], function (TypeConverter $typeConverter) use ($players): array {
+          $skinPackets = [];
+          $adapter = $typeConverter->getSkinAdapter();
+          foreach ($players as $player) {
+            if ($player->isConnected() && $player !== $this) {
+              $skinPackets[] = PlayerSkinPacket::create(
+                $player->getUniqueId(), "", "",
+                $adapter->toSkinData($player->getSkin())
+              );
+            }
+          }
+          return $skinPackets;
+        });
+      } else {
+        // Shitty vanilla PocketMine way to do it
+        foreach ($players as $player) {
+          if ($player->isConnected() && $player !== $this) {
+            $player->sendSkin([$this]);
+          }
+        }
+      }
+
+      return true;
     }
 
-    // game mode check as well, hopefully this doesn't screw anything up
-    if ($this->gamemode == GameMode::SPECTATOR || $do) {
-      $this->ghostPlayerFix();
-    }
-
-    $r = parent::teleport($pos, $yaw, $pitch);
-    if ($r) $this->betterBlockBreaker = null;
-
-    return $r;
+    return false;
   }
 
-  /**
-   * @brief Call this when teleporting to hub or leaving the game.
-   * This is to despawn the player entity from the world to the other clients to get rid of "ghost" players due to a multi world bug.
-   * The ghost players wil still flash on the screen for a tick or 2 visually on any direct viewing clients but this is better than random floating ghosts.
-   * @return void
-   */
+  private function fixedVanillaTeleport($pos, $yaw, $pitch): bool
+  {
+    $vanillaGood = false;
+
+    // Equivalent to Entity::Teleport()
+    Utils::checkVector3NotInfOrNaN($pos);
+
+    if ($pos instanceof Location) {
+      $yaw = $yaw ?? $pos->yaw;
+      $pitch = $pitch ?? $pos->pitch;
+    }
+
+    if ($yaw !== null) {
+      Utils::checkFloatNotInfOrNaN("yaw", $yaw);
+    }
+
+    if ($pitch !== null) {
+      Utils::checkFloatNotInfOrNaN("pitch", $pitch);
+    }
+
+    $from = $this->location->asPosition();
+    $to = Position::fromObject($pos, $pos instanceof Position ? $pos->getWorld() : $this->getWorld());
+    $ev = new EntityTeleportEvent($this, $from, $to);
+    $ev->call();
+
+    if ($ev->isCancelled()) {
+      return false;
+    }
+
+    $this->ySize = 0;
+    $pos = $ev->getTo();
+    $this->setMotion(new Vector3(0, 0, 0));
+
+    if ($this->setPositionAndRotation($pos, $yaw ?? $this->location->yaw, $pitch ?? $this->location->pitch)) {
+      $this->resetFallDistance();
+      $this->setForceMovementUpdate();
+      $this->updateMovement(true);
+      $vanillaGood = true;
+    }
+
+    if ($vanillaGood) {
+      // Equivalent to Player::Teleport() but with a stupid fix
+      $this->removeCurrentWindow();
+      $this->stopSleep();
+
+      $this->sendPosition($this->location, $this->location->yaw, $this->location->pitch, MovePlayerPacket::MODE_TELEPORT);
+      $this->broadcastMovement(true);
+
+      // STUPID FIX
+      if (!$this->isSpectator()) {
+        $this->spawnToAll();
+      }
+
+      $this->resetFallDistance();
+      $this->nextChunkOrderRun = 0;
+
+      if ($this->spawnChunkLoadCount !== -1) {
+        $this->spawnChunkLoadCount = 0;
+      }
+
+      $this->blockBreakHandler = null;
+      $this->resetLastMovements();
+
+      return true;
+    }
+
+    return false;
+  }
+
+  // This does not work, maybe it could with a delayed scheduled task though.
+  // Due to completely rewriting the Teleport code from scratch, we may have fixed all the problems.
   public function ghostPlayerFix(): void
   {
     if (!$this->previousPositionBeforeTeleport) return;
@@ -374,7 +529,6 @@ class SwimPlayer extends Player
   {
 
     if (!isset($this->antiCheatData)) return false; // if anti cheat isn't ready then don't break blocks
-    if ($this->antiCheatData->nukeCheck()) return false; // the block break is cancelled if nuke check returns true
 
     if ($this->isCreative()) {
       return parent::breakBlock($pos);
@@ -429,14 +583,17 @@ class SwimPlayer extends Player
 
   public function handleDiscordLinkRequest(string $discordName, string $discordId): void
   {
-    /*
     if ($this->linkHandler->getDiscordId() !== null) {
       $this->sendMessage(TextFormat::RED . "A Discord link request was found, but you are already linked. If you want to accept the link, remove your current link forst with /discord remove. To deny the link request, run /discord deny. If someone else tried to link to your account, please report them to us.");
       return;
     }
     $this->sendMessage(TextFormat::GREEN . "You have a Discord link request from $discordName. Run /discord accept to accept or /discord deny to deny.");
     $this->linkHandler->setPendingLink($discordId);
-    */
+  }
+
+  public function getLinkHandler(): DiscordLinkHandler
+  {
+    return $this->linkHandler;
   }
 
   public function getTicksSinceLastTeleport(): int
@@ -478,18 +635,10 @@ class SwimPlayer extends Player
   // artificial is false by default in the event that a natural pocketmine function calls it, such as when dealing knock back from damage events
   public function setMotion(Vector3 $motion, bool $artificial = false): bool
   {
-    // $this->antiCheatData?->getMotion()->setSleepTicks((int)(20 * $motion->length())); // 1 second of ticks per length unit
+    if (!$this->isConnected()) return false;
     if ($artificial) $this->ticksSinceLastMotionSet = 0;
     return parent::setMotion($motion);
   }
-
-  /* commented out because we don't have the motion detection in swimcore public (or any detections for that matter)
-  public function addMotion(float $x, float $y, float $z): void
-  {
-    $this->antiCheatData?->getMotion()->setSleepTicks((int)(20 * (new Vector3($x, $y, $z))->length())); // 1 second of ticks per length unit
-    parent::addMotion($x, $y, $z);
-  }
-  */
 
   /**
    * @throws ScoreFactoryException
@@ -532,7 +681,7 @@ class SwimPlayer extends Player
     foreach ($worlds as $world) {
       $entities = $world->getEntities();
       foreach ($entities as $entity) {
-        if ($entity instanceof Entity && $entity->getOwningEntity() === $this) {
+        if ($entity->getOwningEntity() === $this) {
           $entity->kill();
         }
       }
@@ -558,6 +707,16 @@ class SwimPlayer extends Player
       $this->setNameTag(TextFormat::GRAY . $this->nicks->getNick());
     } else {
       $this->rank->rankNameTag();
+    }
+  }
+
+  // override for is connected safety check to avoid exception crashing the whole server
+  public function sendMessage(Translatable|string $message): void
+  {
+    if ($this->isConnected()) {
+      $this->getNetworkSession()->onChatMessage($message);
+    } else {
+      echo("Tried sending [{$message}] to {$this->getName()}, but they are not connected!\n");
     }
   }
 
@@ -610,6 +769,12 @@ class SwimPlayer extends Player
     if ($clearBossBar) {
       $this->removeBossBar();
     }
+
+    // reset camera
+    $clear = new ClearCameraInstruction();
+    $clear->setClear(true);
+    $clear->setRemoveTarget(true);
+    $clear->send($this);
   }
 
   /**
@@ -621,6 +786,26 @@ class SwimPlayer extends Player
       (new ReflectionClass(NetworkSession::class))->getProperty("chunkCacheBlobs")->setValue($this->getNetworkSession(), []);
     }
     return parent::transfer($address, $port, $message);
+  }
+
+  /**
+   * @throws ReflectionException
+   */
+  public function reconnect(string|Translatable|null $message = null): void
+  {
+    $serverAddr = $this->getPlayerInfo()->getExtraData()["ServerAddress"] ?? "0.0.0.0:1";
+    if ($serverAddr === ":0") {
+      $serverAddr = "nethernet.swimgg.club:19132";
+    }
+    $parsedIp = IPParse::sepIpFromPort($serverAddr);
+    $this->transfer($parsedIp[0], $parsedIp[1], $message);
+  }
+
+  public function forceSyncAttributes(): void
+  {
+    if ($this->isOnline()) {
+      $this->networkSession->getEntityEventBroadcaster()->syncAttributes([$this->networkSession], $this, $this->getAttributeMap()->getAll());
+    }
   }
 
   // below are getters for each component
@@ -685,6 +870,11 @@ class SwimPlayer extends Player
     return $this->combatLogger;
   }
 
+  public function getKits(): ?Kits
+  {
+    return $this->kits;
+  }
+
   public function getAckHandler(): ?AckHandler
   {
     return $this->ackHandler;
@@ -716,20 +906,31 @@ class SwimPlayer extends Player
     return $this->ticksSinceLastMotionSet;
   }
 
+  public function getTicksSinceLastGameModeChange(): int
+  {
+    return $this->ticksSinceLastGameModeChange;
+  }
+
   // we have to do this for super weird stuff like explosion caused damage events
   public function resetTicksSinceMotionArtificiallySet(): void
   {
     $this->ticksSinceLastMotionSet = 0;
   }
 
-  public function getTicksSinceLastGameModeChange(): int
-  {
-    return $this->ticksSinceLastGameModeChange;
-  }
-
   public function getComponents(): array
   {
     return $this->components;
+  }
+
+  public function getHearts(float $damage = 0): float
+  {
+    $hp = ($this->getHealth() + $this->getAbsorption()) - $damage;
+    if ($hp > 0) {
+      // Divide by 2 to convert health to hearts, then round to the nearest 0.5
+      return max(round(($hp / 2) * 2) / 2, 0);
+    }
+
+    return 0;
   }
 
 }

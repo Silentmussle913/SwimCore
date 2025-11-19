@@ -2,12 +2,9 @@
 
 namespace core\communicator\packet;
 
-use core\communicator\Communicator;
-use core\communicator\DiscordCommandSender;
-
 class DiscordUserRequestPacket extends Packet
 {
-  public const NETWORK_ID = PacketId::DISCORD_USER_REQUEST;
+  public const  NETWORK_ID = PacketId::DISCORD_USER_REQUEST;
 
   public string $requestId;
   public string $userId;

@@ -24,7 +24,7 @@ class SpawnEntityCmd extends BaseCommand
   public function __construct(SwimCore $core)
   {
     parent::__construct($core, "entity", "DO NOT FUCKING RUN THIS IN PROD, spawn an entity at your position with a rotation, scale, skin, and geo");
-    $this->setPermission("use.staff");
+    $this->setPermission("use.op");
   }
 
   /**
@@ -68,6 +68,11 @@ class SpawnEntityCmd extends BaseCommand
         $actor->setScale($scale);
       }
     }
+  }
+
+  public function getPermission(): ?string
+  {
+    return "use.op";
   }
 
 }

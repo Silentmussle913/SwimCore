@@ -10,11 +10,22 @@ abstract class Behavior
 
   protected Actor $parent;
   protected ?Scene $scene;
+  protected bool $inited = false;
 
   public function __construct(Actor $actor, ?Scene $scene = null)
   {
     $this->parent = $actor;
     $this->scene = $scene;
+  }
+
+  public function hasInited(): bool
+  {
+    return $this->inited;
+  }
+
+  public function setInited(bool $inited): void
+  {
+    $this->inited = $inited;
   }
 
   abstract public function init(): void;
@@ -55,6 +66,10 @@ abstract class Behavior
   public function setScene(Scene $scene): void
   {
     $this->scene = $scene;
+  }
+
+  public function eventMessage(string $message, ...$args): void
+  {
   }
 
 }

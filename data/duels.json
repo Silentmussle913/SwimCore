@@ -1,0 +1,26 @@
+[
+    {
+        "modeName": "nodebuff",
+        "decoratedName": "§4Nodebuff",
+        "worldFolderName": "duels",
+        "isMisc": false,
+        "isRanked": false,
+        "enabled": true
+    },
+    {
+        "modeName": "midfight",
+        "decoratedName": "§4Midfight",
+        "worldFolderName": "duels",
+        "isMisc": false,
+        "isRanked": false,
+        "enabled": true
+    },
+    {
+        "modeName": "boxing",
+        "decoratedName": "§4Boxing",
+        "worldFolderName": "duels",
+        "isMisc": false,
+        "isRanked": false,
+        "enabled": true
+    }
+]

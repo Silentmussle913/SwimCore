@@ -12,13 +12,15 @@ use pocketmine\nbt\tag\CompoundTag;
 use pocketmine\player\Player;
 use pocketmine\utils\TextFormat;
 use pocketmine\world\sound\ThrowSound;
+use WeakReference;
 
 class CustomFishingRod extends FishingRod
 {
 
-  protected ?FishingHook $entity = null;
-
   private bool $inUse = false;
+
+  /** @var ?WeakReference<FishingHook> */
+  protected ?WeakReference $entity = null;
 
   public function __construct(ItemIdentifier $identifier = new ItemIdentifier(ItemTypeIds::FISHING_ROD), string $name = "Rod", array $enchantmentTags = [])
   {
@@ -26,32 +28,30 @@ class CustomFishingRod extends FishingRod
     $this->setCustomName(TextFormat::RESET . TextFormat::GRAY . "Rod");
   }
 
+  public function getMaxDurability() : int {
+    return 150;
+  }
+
+  protected function serializeCompoundTag(CompoundTag $tag) : void {
+    parent::serializeCompoundTag($tag);
+    $this->damage !== 0 ? $tag->setInt("Damage", (int) ($this->damage * (parent::getMaxDurability() / $this->getMaxDurability()))) : $tag->removeTag("Damage");
+  }
+
   public function setInUse(bool $inUse) : void {
     $this->inUse = $inUse;
   }
 
-  public function getMaxDurability(): int
-  {
-    return 150;
-  }
-
-  protected function serializeCompoundTag(CompoundTag $tag): void
-  {
-    parent::serializeCompoundTag($tag);
-    $this->damage !== 0 ? $tag->setInt("Damage", (int)($this->damage * (parent::getMaxDurability() / $this->getMaxDurability()))) : $tag->removeTag("Damage");
-  }
-
-  public function onClickAir(Player $player, Vector3 $directionVector, array &$returnedItems): ItemUseResult
-  {
-    if (!$this->entity || $this->entity->isClosed()) {
+  public function onClickAir(Player $player, Vector3 $directionVector, array &$returnedItems) : ItemUseResult {
+    if (!$this->entity || !$this->entity->get() || $this->entity->get()->isClosed()) {
       $player->fishing = true;
-      $this->entity = new FishingHook(Location::fromObject($player->getEyePos()->subtract(0, 0.2, 0), $player->getWorld()), $player, $this);
-      $this->entity->handleHookCasting($directionVector->multiply(2.2));
-      $this->entity->spawnToAll();
+      $this->entity = WeakReference::create(new FishingHook(Location::fromObject($player->getEyePos()->subtract(0, 0.2, 0), $player->getWorld()), $player, $this));
+      $entity = $this->entity->get();
+      $entity->handleHookCasting($directionVector->multiply(2.2));
+      $entity->spawnToAll();
       $player->getWorld()->addSound($player->getPosition(), new ThrowSound());
       $this->applyDamage(1);
     } else {
-      $this->entity->flagForDespawn();
+      $this->entity->get()?->flagForDespawn();
       $player->fishing = false;
       unset($this->entity);
     }

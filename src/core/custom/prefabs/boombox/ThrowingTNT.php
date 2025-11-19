@@ -32,19 +32,7 @@ class ThrowingTNT extends BaseBox
         return false;
       }
 
-      // the pvp scene states the tnt's behavior (cringe hack feature)
-      $breaksBlocks = false;
-      $scene = $player->getSceneHelper()?->getScene();
-      if ($scene instanceof PvP) {
-        $breaksBlocks = $scene->tntBreaksBlocks;
-      }
-
-      // place the primed tnt
-      $pos = $blockReplace->getPosition();
-      $primedTnt = new SmoothPrimedTNT($player, Location::fromObject($pos->add(0.5, 0, 0.5), $pos->getWorld()), $breaksBlocks);
-      $primedTnt->setFuse(20);
-      $primedTnt->spawnToAll();
-      $primedTnt->broadcastSound(new IgniteSound());
+      $this->prepareTNT($blockReplace, $player);
 
       // then add a cool down to it
       $cd->setCoolDown($item, 1, false);
@@ -73,7 +61,7 @@ class TNT_Listener implements Listener
     /** @var SwimPlayer $player */
     $player = $event->getPlayer();
 
-    // the pvp scene states the tnt's behavior (cringe hack feature)
+    // the pvp scene states the tnt's behavior
     $breaksBlocks = false;
     $scene = $player->getSceneHelper()?->getScene();
     if ($scene instanceof PvP) {
