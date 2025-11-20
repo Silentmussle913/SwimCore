@@ -160,4 +160,13 @@ class TeamManager
     }
   }
 
+  public function teamValidAndInScene(?Team $team = null): bool
+  {
+    if ($team === null) {
+      return false;
+    }
+
+    return in_array($team, $this->teams, true);
+  }
+
 }

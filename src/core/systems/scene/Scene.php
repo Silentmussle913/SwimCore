@@ -332,11 +332,25 @@ abstract class Scene
 
   // warning, make sure team exists if you want to add a player to a team
 
-  public final function addPlayer(SwimPlayer $player, string $team = 'none'): void
+  public final function addPlayer(SwimPlayer $player, ?Team $team = null): void
   {
     $this->playerCount++;
-    $team = $this->teamManager->getTeam($team);
-    $team?->addPlayer($player); // big problem if team does not exist
+
+    // First add them to a team if a default one for them to join right away was passed
+    if ($this->teamManager->teamValidAndInScene($team)) {
+      $team->addPlayer($player);
+      if (SwimCore::$DEBUG) {
+        echo("Scene::addPlayer() Added {$player->getName()} to {$team->getTeamName()} Team\n");
+      }
+    } else if ($team !== null) {
+      // this is bad so we just always echo it
+      echo("Scene::addPlayer() {$player->getName()} tried to be added to a team not in the scene: {$team->getTeamName()}\n");
+    } else {
+      // Common that we aren't given a team to join right away
+      if (SwimCore::$DEBUG) {
+        echo("Scene::addPlayer() {$player->getName()} not given a default team to join for {$this->sceneName}\n");
+      }
+    }
 
     $this->players[] = $player; // push back into players array too
     $this->playerAdded($player);

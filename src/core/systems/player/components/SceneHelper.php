@@ -7,6 +7,7 @@ use core\systems\event\ServerGameEvent;
 use core\systems\party\Party;
 use core\systems\player\Component;
 use core\systems\player\SwimPlayer;
+use core\systems\scene\misc\Team;
 use core\systems\scene\Scene;
 use jackmd\scorefactory\ScoreFactoryException;
 use core\systems\scene\SceneSystem;
@@ -109,11 +110,11 @@ class SceneHelper extends Component
    * @throws ScoreFactoryException
    * @return bool if worked
    */
-  public function setNewScene(string $sceneName): bool
+  public function setNewScene(string $sceneName, ?Team $team = null): bool
   {
     $scene = $this->sceneSystem->getScene($sceneName);
     if ($scene) {
-      $this->sceneSystem->setScene($this->swimPlayer, $scene);
+      $this->sceneSystem->setScene($this->swimPlayer, $scene, $team);
       return true;
     } else {
       $this->swimPlayer->sendMessage(TextFormat::RED . "Failed to join scene: " . $sceneName);

@@ -5,6 +5,7 @@ namespace core\systems\scene;
 use core\SwimCore;
 use core\systems\entity\EntitySystem;
 use core\systems\player\SwimPlayer;
+use core\systems\scene\misc\Team;
 use core\systems\System;
 use core\utils\StackTracer;
 use Exception;
@@ -125,7 +126,7 @@ class SceneSystem extends System
   /**
    * @throws ScoreFactoryException
    */
-  public function setScene(SwimPlayer $player, Scene $newScene): void
+  public function setScene(SwimPlayer $player, Scene $newScene, ?Team $team = null): void
   {
     $currentScene = $player->getSceneHelper()->getScene();
 
@@ -143,9 +144,9 @@ class SceneSystem extends System
     }
     $player->cleanPlayerState(); // then clean the player's state
 
-    // then add to new scene
+    // then add to new scene with the team passed in
     $player->getSceneHelper()->setScene($newScene); // cache scene pointer
-    $newScene->addPlayer($player);
+    $newScene->addPlayer($player, $team);
     $this->entitySystem->playerJoiningScene($player, $newScene);
   }
 
