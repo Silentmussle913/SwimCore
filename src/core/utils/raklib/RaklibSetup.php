@@ -4,7 +4,7 @@ namespace core\utils\raklib;
 
 use core\SwimCore;
 use core\SwimCoreInstance;
-use core\utils\security\IPParse;
+use core\utils\security\ParseIP;
 use pocketmine\event\EventPriority;
 use pocketmine\event\Listener;
 use pocketmine\event\server\NetworkInterfaceRegisterEvent;
@@ -86,7 +86,7 @@ class RaklibSetup implements Listener
       }, EventPriority::MONITOR, $core, false);
     } else {
       foreach ($addresses as $address) {
-        $ipAndPort = IPParse::sepIpFromPortWithv6Bracketed($address);
+        $ipAndPort = ParseIP::sepIpFromPortWithv6Bracketed($address);
         if ($ipAndPort) {
           [$ip, $port] = $ipAndPort;
         }

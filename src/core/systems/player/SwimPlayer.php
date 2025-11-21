@@ -26,7 +26,7 @@ use core\systems\player\components\Settings;
 use core\utils\BehaviorEventEnum;
 use core\utils\InventoryUtil;
 use core\utils\PositionHelper;
-use core\utils\security\IPParse;
+use core\utils\security\ParseIP;
 use core\utils\StackTracer;
 use jackmd\scorefactory\ScoreFactory;
 use jackmd\scorefactory\ScoreFactoryException;
@@ -797,7 +797,7 @@ class SwimPlayer extends Player
     if ($serverAddr === ":0") {
       $serverAddr = "nethernet.swimgg.club:19132";
     }
-    $parsedIp = IPParse::sepIpFromPort($serverAddr);
+    $parsedIp = ParseIP::sepIpFromPort($serverAddr);
     $this->transfer($parsedIp[0], $parsedIp[1], $message);
   }
 

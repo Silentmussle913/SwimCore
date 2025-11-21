@@ -21,7 +21,7 @@ use core\utils\loaders\CustomItemLoader;
 use core\utils\raklib\RaklibSetup;
 use core\utils\raklib\SwimSkinAdapter;
 use core\utils\raklib\SwimTypeConverter;
-use core\utils\security\IPParse;
+use core\utils\security\ParseIP;
 use core\utils\loaders\WorldLoader;
 use core\utils\VoidGenerator;
 use CortexPE\Commando\exception\HookAlreadyRegistered;
@@ -296,7 +296,7 @@ class SwimCore extends PluginBase
       $this->shuttingDown = true;
       foreach ($this->getServer()->getOnlinePlayers() as $p) {
         $serverAddr = $p->getPlayerInfo()->getExtraData()["ServerAddress"] ?? "0.0.0.0:1";
-        $parsedIp = IPParse::sepIpFromPort($serverAddr);
+        $parsedIp = ParseIP::sepIpFromPort($serverAddr);
         $p->getNetworkSession()->transfer($parsedIp[0], $parsedIp[1]);
       }
     }

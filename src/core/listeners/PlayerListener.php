@@ -13,7 +13,7 @@ use core\utils\BehaviorEventEnum;
 use core\utils\cordhook\CordHook;
 use core\utils\InventoryUtil;
 use core\utils\PositionHelper;
-use core\utils\security\IPParse;
+use core\utils\security\ParseIP;
 use jackmd\scorefactory\ScoreFactoryException;
 use pocketmine\block\BlockTypeIds;
 use pocketmine\event\block\BlockBreakEvent;
@@ -77,7 +77,7 @@ class PlayerListener implements Listener
   public function onJoin(PlayerJoinEvent $event)
   {
     if ($this->core->getRegionInfo()->autoTransfer !== "") {
-      [$ip, $port] = IPParse::sepIpFromPort($this->core->getRegionInfo()->autoTransfer);
+      [$ip, $port] = ParseIP::sepIpFromPort($this->core->getRegionInfo()->autoTransfer);
       $event->getPlayer()->transfer($ip, $port);
       $event->setJoinMessage("");
       return;
