@@ -14,3 +14,20 @@ Automating docs
 Suggested script location: `tools/docs_generator.php`.
 
 If you'd like, I can prototype `tools/docs_generator.php` or a small script to generate per-class docs automatically from the repo.
+
+Auto-generated aggregate docs
+- The repo includes a Python script that walks `src/core` and generates a single `docs/Documentation.md` with every class, method, docblock, parameters, return types, and a sample PHP usage example.
+- To re-generate documentation using the repo virtualenv Python, run (without activating the venv):
+
+```powershell
+& "E:/projects backup/github/SwimCore/.venv/Scripts/python.exe" "e:/projects backup/github/SwimCore/scripts/generate_documentation.py"
+```
+
+If you prefer to activate the venv in PowerShell, you may need to temporarily allow script execution for the session:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+& ".venv/Scripts/Activate.ps1"
+```
+
+Note: Running `Activate.ps1` may require admin or policy changes. If you don't want to change execution policy, run the venv Python directly as shown above.
