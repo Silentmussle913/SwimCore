@@ -70,9 +70,13 @@ class MapsData extends System
     return $this->mapPools['basic']->getRandomMap();
   }
 
-  public function getFirstInactiveMapByBaseNameFromMode(string $mode, string $name): ?MapInfo
+  public function getFirstInactiveMapByBaseNameFromMode(string $mode, string $name, bool $normalizeMode = true): ?MapInfo
   {
-    $m = self::normalizeKey($mode);
+    if ($normalizeMode) {
+      $m = self::normalizeKey($mode);
+    } else {
+      $m = $mode;
+    }
 
     if (isset($this->mapPools[$m])) {
       return $this->mapPools[$m]->getFirstInactiveMapByBaseName($name);
@@ -172,10 +176,14 @@ class MapsData extends System
     return $this->mapPools['basic']->getMapInfoByName($name);
   }
 
-  public function getMapPool(string $mode): ?MapPool
+  public function getMapPool(string $mode, bool $normalize = true): ?MapPool
   {
-    $m = self::normalizeKey($mode);
-    return $this->mapPools[$m] ?? null;
+    if ($normalize) {
+      $m = self::normalizeKey($mode);
+      return $this->mapPools[$m] ?? null;
+    } else {
+      return $this->mapPools[$mode] ?? null;
+    }
   }
 
   /**

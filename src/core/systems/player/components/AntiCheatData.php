@@ -16,6 +16,7 @@ use pocketmine\event\server\DataPacketReceiveEvent;
 use pocketmine\math\AxisAlignedBB;
 use pocketmine\math\Vector3;
 use pocketmine\network\mcpe\protocol\PlayerAuthInputPacket;
+use pocketmine\network\mcpe\protocol\types\DeviceOS;
 use pocketmine\network\mcpe\protocol\types\PlayerAuthInputFlags;
 use pocketmine\world\World;
 use ReflectionException;
@@ -42,6 +43,8 @@ class AntiCheatData extends Component
   public ?Vector3 $lastClientPrediction = null;
   public ?Vector3 $currentMoveDelta = null;
   public ?Vector3 $lastMoveDelta = null;
+
+  private int $deviceEnumOS = DeviceOS::UNKNOWN;
 
   public int $lastSkinChangeTime = 0;
 
@@ -71,6 +74,10 @@ class AntiCheatData extends Component
   private int $specialTimeout = 0;
   public bool $isSpecialColliding = false;
   public ?Block $lastSpecial = null;
+
+  public bool $sprinting = false;
+  public bool $swimming = false;
+  public bool $sneaking = false;
 
   // caching
   private ?Block $lastCollidedWithHorizontally = null;
@@ -109,6 +116,7 @@ class AntiCheatData extends Component
     } else {
       $deviceOS = $extraData["DeviceOS"];
     }
+    $this->deviceEnumOS = $deviceOS;
     $this->setData(AcData::DEVICE_OS, LoginProcessor::$platformMap[$deviceOS]);
   }
 
@@ -209,7 +217,9 @@ class AntiCheatData extends Component
   {
     $this->lastClientPrediction = $pk->getDelta();
     $this->lastLocation = $this->currentLocation;
-    $this->currentLocation = Location::fromObject($pk->getPosition()->subtract(0, 1.62, 0), $this->swimPlayer->getWorld(), $pk->getYaw(), $pk->getPitch());
+    $this->currentLocation = Location::fromObject(
+      $pk->getPosition()->subtract(0, 1.62, 0), $this->swimPlayer->getWorld(), $pk->getYaw(), $pk->getPitch()
+    );
 
     if (is_null($this->lastLocation)) {
       $this->lastLocation = $this->currentLocation;
@@ -220,6 +230,25 @@ class AntiCheatData extends Component
       $this->lastMoveDelta->x = $this->currentMoveDelta->x;
       $this->lastMoveDelta->y = $this->currentMoveDelta->y;
       $this->lastMoveDelta->z = $this->currentMoveDelta->z;
+    }
+
+    if ($pk->getInputFlags()->get(PlayerAuthInputFlags::START_SPRINTING)) {
+      $this->sprinting = true;
+    }
+    if ($pk->getInputFlags()->get(PlayerAuthInputFlags::STOP_SPRINTING)) {
+      $this->sprinting = false;
+    }
+    if ($pk->getInputFlags()->get(PlayerAuthInputFlags::START_SWIMMING)) {
+      $this->swimming = true;
+    }
+    if ($pk->getInputFlags()->get(PlayerAuthInputFlags::STOP_SWIMMING)) {
+      $this->swimming = false;
+    }
+    if ($pk->getInputFlags()->get(PlayerAuthInputFlags::START_SNEAKING)) {
+      $this->sneaking = true;
+    }
+    if ($pk->getInputFlags()->get(PlayerAuthInputFlags::STOP_SNEAKING)) {
+      $this->sneaking = false;
     }
   }
 
@@ -505,11 +534,24 @@ class AntiCheatData extends Component
     $bigBox = $this->swimPlayer->getBoundingBox()->expandedCopy(0.5, 0.5, 0.5);
     $collisionBlocks = WorldCollisionBoxHelper::getCollisionBlocksIncludingSoft($bigBox, $this->swimPlayer->getworld());
 
+    // Some detections trip up over us being on top of a lily pad, very, very stupid hack (the water detection is 100% needed though)
+    $pos = $this->swimPlayer->getPosition();
+    $below = $this->swimPlayer->getWorld()->getBlock($pos->subtract(0, 1, 0));
+    $below2 = $this->swimPlayer->getWorld()->getBlock($pos->subtract(0, 2, 0));
+    if ($below->getTypeId() == BlockTypeIds::LILY_PAD || $below2->getTypeId() == BlockTypeIds::WATER) {
+      if (SwimCore::$DEBUG) {
+        echo("{$this->swimPlayer->getName()} is standing on a lily pad\n");
+      }
+      $this->isSpecialColliding = true;
+      $this->lastSpecial = $below;
+      return true;
+    }
+
     /** @var Block $block */
     foreach ($collisionBlocks as $block) {
       if (WorldCollisionBoxHelper::isSoft($block->getTypeId())) {
         if (SwimCore::$DEBUG) {
-          echo("We are specially colliding {$block->getName()}\n");
+          echo("{$this->swimPlayer->getName()} is specially colliding {$block->getName()}\n");
         }
         $this->isSpecialColliding = true;
         $this->lastSpecial = $block; // maybe use this for quick checking before calling getBlocksInBB? not sure if possible to do

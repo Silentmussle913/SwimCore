@@ -2,7 +2,10 @@
 
 namespace core\custom\prefabs\rod;
 
+use core\SwimCore;
 use core\systems\entity\entities\DeltaSupportTrait;
+use core\utils\raklib\SwimTypeConverter;
+use core\utils\TimeHelper;
 use pocketmine\entity\Entity;
 use pocketmine\entity\EntitySizeInfo;
 use pocketmine\entity\Location;
@@ -13,6 +16,8 @@ use pocketmine\item\ItemTypeIds;
 use pocketmine\math\RayTraceResult;
 use pocketmine\math\Vector3;
 use pocketmine\nbt\tag\CompoundTag;
+use pocketmine\network\mcpe\convert\TypeConverter;
+use pocketmine\network\mcpe\protocol\RemoveActorPacket;
 use pocketmine\network\mcpe\protocol\types\entity\EntityIds;
 use pocketmine\player\Player;
 use pocketmine\utils\Random;
@@ -64,21 +69,98 @@ class FishingHook extends Projectile
     $this->flagForDespawn();
   }
 
-  protected function entityBaseTick(int $tickDiff = 1): bool
+  public function onUpdate(int $currentTick): bool
   {
-    $hasUpdate = parent::entityBaseTick($tickDiff);
+    if ($this->isClosed()) {
+      return false;
+    }
+
+    // Let the parent do all the usual movement + base tick stuff
+    $parentResult = parent::onUpdate($currentTick);
+
+    // Our extra despawn logic (distance, lifetime, owner state, etc.)
+    $this->updates();
+
+    // If parent says "no more updates needed", but we haven't flagged for despawn,
+    // force a "true" so the world keeps ticking this entity.
+    // This is because projectiles (which we are deriving from) that stop moving are marked to stop updating.
+    // But fishing hooks from rods can live on while laying on the ground once still cast, we hack fix the behavior here:
+    if (!$parentResult && !$this->isFlaggedForDespawn() && $this->getOwningEntity() !== null) {
+      return true;
+    }
+
+    return $parentResult;
+  }
+
+
+  private function updates(): bool
+  {
     $player = $this->getOwningEntity();
+    $hasUpdate = false;
     $despawn = false;
 
     // Checks for automatic despawn
     if ($player instanceof Player) {
+      // not holding a fishing rod anymore
+      if ($player->getInventory()->getItemInHand()->getTypeId() != ItemTypeIds::FISHING_ROD) {
+        if (SwimCore::$DEBUG) {
+          echo("FishingHook: despawn because player is not holding a fishing rod\n");
+        }
+        $despawn = true;
+      }
+
+      // player is dead
+      if (!$despawn && !$player->isAlive()) {
+        if (SwimCore::$DEBUG) {
+          echo("FishingHook: despawn because player is not alive\n");
+        }
+        $despawn = true;
+      }
+
+      // player object closed
+      if (!$despawn && $player->isClosed()) {
+        if (SwimCore::$DEBUG) {
+          echo("FishingHook: despawn because player is closed\n");
+        }
+        $despawn = true;
+      }
+
+      // different world
       if (
-        $player->getInventory()->getItemInHand()->getTypeId() !== ItemTypeIds::FISHING_ROD || !$player->isAlive()
-        || $player->isClosed() || $player->getLocation()->getWorld()->getId() !== $this->getLocation()->getWorld()->getId()
-        || $player->getPosition()->distanceSquared($this->getPosition()) > 1600) {
+        !$despawn
+        && $player->getLocation()->getWorld()->getId() != $this->getLocation()->getWorld()->getId()
+      ) {
+        if (SwimCore::$DEBUG) {
+          echo("FishingHook: despawn because player is in a different world\n");
+        }
+        $despawn = true;
+      }
+
+      // too far away
+      if (
+        !$despawn
+        && $player->getPosition()->distanceSquared($this->getPosition()) > 1600
+      ) {
+        if (SwimCore::$DEBUG) {
+          echo("FishingHook: despawn because player is too far away\n");
+        }
+        $despawn = true;
+      }
+
+      // lived too long
+      if (
+        !$despawn
+        && $this->ticksLived > TimeHelper::secondsToTicks(5)
+      ) {
+        if (SwimCore::$DEBUG) {
+          echo("FishingHook: despawn because hook lived longer than 5 seconds\n");
+        }
         $despawn = true;
       }
     } else {
+      if (SwimCore::$DEBUG) {
+        echo("FishingHook: despawn because owning entity is not a Player\n");
+      }
       $despawn = true;
     }
 
@@ -96,9 +178,23 @@ class FishingHook extends Projectile
 
     if ($owningEntity instanceof Player) {
       $owningEntity->fishing = false;
+      CustomFishingRod::clearCurrentHook($owningEntity, $this);
     }
+    // $this->superKillMySelf(); // don't think we need to do this anymore
 
     parent::flagForDespawn();
+  }
+
+  // Tell the goddamn fishing hook entity to do a triple backflip off a 70-story skyscraper
+  private function superKillMySelf(): void
+  {
+    $targets = $this->server->getOnlinePlayers();
+    $entityId = $this->id;
+    SwimTypeConverter::broadcastByTypeConverter($targets, function (TypeConverter $typeConverter) use ($entityId): array {
+      return [
+        RemoveActorPacket::create($entityId)
+      ];
+    });
   }
 
   public function handleHookCasting(Vector3 $vec): void

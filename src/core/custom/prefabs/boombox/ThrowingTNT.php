@@ -80,7 +80,7 @@ class TNT_Listener implements Listener
 
       // if the item cool down did not cancel the event (meaning we aren't on cool down) then do tnt throwing
       $tnt = new SmoothPrimedTNT($player, Location::fromObject($player->getEyePos(), $player->getWorld()), $breaksBlocks);
-      $tnt->setScale(0.5);
+      $tnt->setScale(1);
       $tnt->setGravity(0.025);
       $tnt->setMotion($player->getDirectionVector()->multiply(1.2));
       $tnt->setNoClientPredictions(false);

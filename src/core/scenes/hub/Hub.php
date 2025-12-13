@@ -7,7 +7,7 @@ use core\custom\prefabs\hub\HubEntities;
 use core\custom\prefabs\hub\ServerSelectorCompass;
 use core\forms\hub\FormDuelRequests;
 use core\forms\hub\FormDuels;
-use core\forms\hub\FormEvents;
+use core\forms\hub\FormEventCreate;
 use core\forms\hub\FormFFA;
 use core\forms\hub\FormSettings;
 use core\forms\hub\FormSpectate;
@@ -234,7 +234,7 @@ class Hub extends Scene
         $this->editKitConfirm($swimPlayer);
         break;
       case ItemTypeIds::NETHER_STAR:
-        FormEvents::eventForm($this->core, $swimPlayer);
+        FormEventCreate::eventBaseForm($this->core, $swimPlayer);
         break;
     }
   }

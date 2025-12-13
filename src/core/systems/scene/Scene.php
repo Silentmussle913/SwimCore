@@ -416,7 +416,7 @@ abstract class Scene
     }
   }
 
-  public function sceneSound(string $soundName, int $volume = 2, int $pitch = 1): void
+  public function sceneSound(string $soundName, float $volume = 2, float $pitch = 1): void
   {
     foreach ($this->players as $player) {
       if ($player->isOnline()) ServerSounds::playSoundToPlayer($player, $soundName, $volume, $pitch);

@@ -52,6 +52,16 @@ class PositionHelper
     return $yawDegrees;
   }
 
+  // returns a Vector3 snapped to the block grid using floor (safe for negative coords)
+  public static function toBlockVector(Vector3 $vector3): Vector3
+  {
+    return new Vector3(
+      (int)floor($vector3->x),
+      (int)floor($vector3->y),
+      (int)floor($vector3->z)
+    );
+  }
+
   // center of a 3D block position in terms of barycentric coordinates
   public static function centerPosition(Position $position): Position
   {
@@ -83,18 +93,173 @@ class PositionHelper
    * Generates a hashed integer key from 3D coordinates for fast lookup.
    * This treats the coordinates as whole number integers for block position.
    * Uses XOR'd prime numbers on the coordinates.
-   * @brief I am nervous that under immensely large data sets this can have hash collisions.
-   * @param Vector3|Position $vector3
+   * @param Vector3 $vector
    * @return int The hashed key.
+   * @deprecated This has collisions when range exceeds 5k. Instead, use getVectorEncodedKey($vector)
    */
-  public static function getVectorHashKey(Vector3|Position $vector3): int
+  public static function getVectorHashKey(Vector3 $vector): int
   {
-    return (((int)$vector3->x) * 73856093) ^ (((int)$vector3->y) * 19349663) ^ (((int)$vector3->z) * 83492791);
+    $v = self::toBlockVector($vector);
+    return (((int)$v->x) * 73856093) ^ (((int)$v->y) * 19349663) ^ (((int)$v->z) * 83492791);
   }
 
-  // returns the position closer to the other position by given amount
-  // calculates the angle to move by as well automatically
-  // for example if positions share the same X or Z coordinate than it should move perfectly straight by amount in the appropriate direction
+  /**
+   * Generates a collision-proof integer key from 3D coordinates for fast lookup.
+   * This treats the coordinates as whole number integers for block position.
+   * Packs x/y/z into a single 64-bit integer using fixed bit ranges.
+   * @brief This is collision-free as long as x/z are within [-33,554,432, 33,554,431] and y within [0, 4095].
+   * @param Vector3 $vector
+   * @return int The packed key.
+   */
+  public static function getVectorEncodedKey(Vector3 $vector): int
+  {
+    $v = self::toBlockVector($vector);
+
+    $x = (int)$v->x;
+    $y = (int)$v->y;
+    $z = (int)$v->z;
+
+    // Range assumptions (matches modern MC scale well):
+    // x,z: signed 26-bit  -> [-33,554,432 .. 33,554,431]
+    // y:   unsigned 12-bit -> [0 .. 4095]
+    //
+    // Layout (low -> high bits):
+    // 0..25   : x (biased)
+    // 26..37  : y
+    // 38..63  : z (biased)
+
+    $xBiased = $x + 33554432; // 2^25
+    $zBiased = $z + 33554432;
+
+    return (($xBiased & 0x3FFFFFF) | (($y & 0xFFF) << 26) | (($zBiased & 0x3FFFFFF) << 38));
+  }
+
+  /**
+  *  Places $positionToMove on the horizontal line between itself and $positionToMoveTowards
+  *  so that the final horizontal distance between them is exactly $distance.
+  *  Keeps Y from $positionToMove.
+  */
+  public static function placeApartXZ(Position $positionToMove, Position $positionToMoveTowards, float $distance): Position
+  {
+    if ($distance <= 0) {
+      return new Position(
+        $positionToMoveTowards->x,
+        $positionToMove->y,
+        $positionToMoveTowards->z,
+        $positionToMove->getWorld()
+      );
+    }
+
+    $fromX = $positionToMove->x;
+    $fromZ = $positionToMove->z;
+
+    $toX = $positionToMoveTowards->x;
+    $toZ = $positionToMoveTowards->z;
+
+    $diffX = $fromX - $toX;
+    $diffZ = $fromZ - $toZ;
+
+    $currentDist = sqrt($diffX * $diffX + $diffZ * $diffZ);
+
+    // Same horizontal spot, pick arbitrary direction (+X)
+    if ($currentDist == 0.0) {
+      return new Position(
+        $toX + $distance,
+        $positionToMove->y,
+        $toZ,
+        $positionToMove->getWorld()
+      );
+    }
+
+    $ratio = $distance / $currentDist;
+
+    $newX = $toX + $diffX * $ratio;
+    $newZ = $toZ + $diffZ * $ratio;
+
+    return new Position($newX, $positionToMove->y, $newZ, $positionToMove->getWorld());
+  }
+
+
+  /**
+  *  Places $positionToMove on the line between itself and $positionToMoveTowards
+  *  so that the final distance between them is exactly $distance.
+  *  This may move the position closer or further away to satisfy the distance.
+  */
+  public static function placeApart(Position $positionToMove, Position $positionToMoveTowards, float $distance): Position
+  {
+    // If distance is zero or negative, snap directly to the other position
+    if ($distance <= 0) {
+      return $positionToMoveTowards;
+    }
+
+    // Cache coords
+    $fromX = $positionToMove->x;
+    $fromY = $positionToMove->y;
+    $fromZ = $positionToMove->z;
+
+    $toX = $positionToMoveTowards->x;
+    $toY = $positionToMoveTowards->y;
+    $toZ = $positionToMoveTowards->z;
+
+    // Direction from "towards" -> "move"
+    $diffX = $fromX - $toX;
+    $diffY = $fromY - $toY;
+    $diffZ = $fromZ - $toZ;
+
+    // Current distance between the two positions
+    $currentDist = sqrt($diffX * $diffX + $diffY * $diffY + $diffZ * $diffZ);
+
+    // If they are at the same spot, choose an arbitrary direction (+X) to separate them
+    if ($currentDist == 0.0) {
+      return new Position(
+        $toX + $distance,
+        $toY,
+        $toZ,
+        $positionToMove->getWorld()
+      );
+    }
+
+    // Normalize direction and scale by target distance
+    $ratio = $distance / $currentDist;
+
+    $newX = $toX + $diffX * $ratio;
+    $newY = $toY + $diffY * $ratio;
+    $newZ = $toZ + $diffZ * $ratio;
+
+    return new Position($newX, $newY, $newZ, $positionToMove->getWorld());
+  }
+
+  /**
+  *  Moves $positionToMove towards $positionToMoveTowards so that the final
+  *  distance between them is at most $maxDistance.
+  *  If they are already within $maxDistance, the original position is returned.
+  *  If they are farther, it will place $positionToMove exactly $maxDistance blocks away.
+  */
+  public static function moveWithin(Position $positionToMove, Position $positionToMoveTowards, float $maxDistance): Position
+  {
+    // Negative or zero max distance: snap directly to the other position
+    if ($maxDistance <= 0) {
+      return $positionToMoveTowards;
+    }
+
+    $distance = $positionToMove->asVector3()->distance($positionToMoveTowards->asVector3());
+
+    // Already within the allowed distance, no need to move
+    if ($distance <= $maxDistance) {
+      return $positionToMove;
+    }
+
+    // We want to end up exactly $maxDistance away, so move by (distance - maxDistance)
+    $amountToMove = $distance - $maxDistance;
+
+    return self::moveCloserTo($positionToMove, $positionToMoveTowards, $amountToMove);
+  }
+
+  /**
+  *  Returns the position closer to the other position by given amount.
+  *  Calculates the angle to move by as well automatically.
+  *  For example if positions share the same X or Z coordinate than it should move perfectly straight by amount in the appropriate direction
+  */
   public static function moveCloserTo(Position $positionToMove, Position $positionToMoveTowards, float $amount): Position
   {
     // Calculate the distance between the two positions
@@ -140,7 +305,9 @@ class PositionHelper
 
   public static function sameXZ(Vector3 $vector3, Vector3 $otherVector3): bool
   {
-    return ((int)$vector3->x == (int)$otherVector3->x) && ((int)$vector3->z == (int)$otherVector3->z);
+    $a = self::toBlockVector($vector3);
+    $b = self::toBlockVector($otherVector3);
+    return ((int)$a->x == (int)$b->x) && ((int)$a->z == (int)$b->z);
   }
 
   public static function getChunkX(Position $position): int|float

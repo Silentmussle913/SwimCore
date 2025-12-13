@@ -5,6 +5,7 @@ namespace core\forms\parties;
 use core\SwimCore;
 use core\systems\party\Party;
 use core\systems\player\SwimPlayer;
+use jojoe77777\FormAPI\CustomForm;
 use jojoe77777\FormAPI\SimpleForm;
 use pocketmine\utils\TextFormat;
 
@@ -126,7 +127,7 @@ class FormPartyCreate
           if ($openJoin) {
             $party->addPlayerToParty($player);
           } else {
-            $party->sendJoinRequest($player);
+            $party->sendJoinRequest($player, true);
           }
         } else {
           $player->sendMessage(TextFormat::RED . "Party no longer available to join");

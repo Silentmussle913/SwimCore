@@ -4,6 +4,7 @@ namespace core\systems\player;
 
 use CameraAPI\Instructions\ClearCameraInstruction;
 use core\SwimCore;
+use core\SwimCoreInstance;
 use core\systems\player\components\AckHandler;
 use core\systems\player\components\AntiCheatData;
 use core\systems\player\components\Attributes;
@@ -25,9 +26,7 @@ use core\systems\player\components\SceneHelper;
 use core\systems\player\components\Settings;
 use core\utils\BehaviorEventEnum;
 use core\utils\InventoryUtil;
-use core\utils\PositionHelper;
 use core\utils\security\ParseIP;
-use core\utils\StackTracer;
 use jackmd\scorefactory\ScoreFactory;
 use jackmd\scorefactory\ScoreFactoryException;
 use pocketmine\block\BlockTypeIds;
@@ -38,16 +37,14 @@ use pocketmine\entity\Location;
 use pocketmine\event\entity\EntityDamageEvent;
 use pocketmine\event\entity\EntityTeleportEvent;
 use pocketmine\event\Event;
+use pocketmine\event\player\PlayerGameModeChangeEvent;
 use pocketmine\event\player\PlayerInteractEvent;
 use pocketmine\lang\Translatable;
 use pocketmine\math\Vector3;
 use pocketmine\nbt\tag\CompoundTag;
-use pocketmine\network\mcpe\convert\TypeConverter;
 use pocketmine\network\mcpe\NetworkSession;
 use pocketmine\network\mcpe\protocol\BossEventPacket;
 use pocketmine\network\mcpe\protocol\MovePlayerPacket;
-use pocketmine\network\mcpe\protocol\PlayerSkinPacket;
-use pocketmine\network\mcpe\protocol\RemoveActorPacket;
 use pocketmine\network\mcpe\protocol\types\BossBarColor;
 use pocketmine\player\GameMode;
 use pocketmine\player\Player;
@@ -105,6 +102,7 @@ class SwimPlayer extends Player
   public int $ticksSinceLastTeleport = 0;
   private int $ticksSinceLastMotionSet = 0;
   private int $ticksSinceLastGameModeChange = 0;
+  private int $tickSinceLastDespawnFromAll = -1;
 
   private ?Position $previousPositionBeforeTeleport = null;
 
@@ -124,13 +122,13 @@ class SwimPlayer extends Player
     ?CompoundTag   $namedtag
   )
   {
+    $this->core = SwimCoreInstance::getInstance();
     $this->randomUUID = Uuid::uuid4(); // to make sure this is set right away
     parent::__construct($server, $session, $playerInfo, $authenticated, $spawnLocation, $namedtag);
   }
 
   public function init(SwimCore $core): void
   {
-    $this->core = $core;
     $this->eventBehaviorComponentManager = new EventBehaviorComponentManager();
 
     // then construct all the components
@@ -318,15 +316,16 @@ class SwimPlayer extends Player
     }
   }
 
-  // below are helper functions for managing a player's scoreboards and other data like inventory and child entities
-
   public function teleport(Vector3 $pos, ?float $yaw = null, ?float $pitch = null): bool
   {
     if (SwimCore::$DEBUG) {
       echo("Teleport on " . $this->getName() . " called\n");
-      StackTracer::PrintStackTrace();
+      // StackTracer::PrintStackTrace();
     }
-    if (!$this->isConnected()) return false; // this could maybe cause horrible bugs, but it shouldn't in theory
+
+    if (!$this->isConnected()) {
+      return false;
+    }
 
     // log this for ghost player fixes (anti cheat could also use this maybe for something)
     $this->previousPositionBeforeTeleport = clone($this->getPosition());
@@ -335,50 +334,11 @@ class SwimPlayer extends Player
     $this->antiCheatData?->teleported();
     $this->ticksSinceLastTeleport = 0;
 
-    // To avoid ghost players and messed up skins due to the flawed vanilla teleport logic, we have to do this routine:
     if ($this->fixedVanillaTeleport($pos, $yaw, $pitch)) {
       $this->betterBlockBreaker = null;
-      $this->core->getScheduler()->scheduleDelayedTask(
-        new ClosureTask(function (): void {
-          if ($this->isConnected()) {
-            $this->sendSkin();
-          }
-        }),
-        2  // 2-tick delay (is this enough??? Very race condition bound based on higher ping players > 100 ms)
-      );
 
-      // Retrieve all skins in the world from players near us, because apparently this isn't a thing PocketMine does for us correctly???
-      // This could really hurt perf on the client, we at least do get viewers for position, which may or may not be sufficient.
-      $world = $this->getWorld(); // initially just whatever world we are already in
-      if ($pos instanceof Position) {
-        $world = $pos->getWorld(); // new world since we are actually going to a new position instead of just a Vector3
-      }
-
-      $players = $world->getViewersForPosition($pos);
-
-      // Make it send all the player skins in batch to the recipients' client.
-      if (Swimcore::$isNetherGames) {
-        TypeConverter::broadcastByTypeConverter([$this], function (TypeConverter $typeConverter) use ($players): array {
-          $skinPackets = [];
-          $adapter = $typeConverter->getSkinAdapter();
-          foreach ($players as $player) {
-            if ($player->isConnected() && $player !== $this) {
-              $skinPackets[] = PlayerSkinPacket::create(
-                $player->getUniqueId(), "", "",
-                $adapter->toSkinData($player->getSkin())
-              );
-            }
-          }
-          return $skinPackets;
-        });
-      } else {
-        // Shitty vanilla PocketMine way to do it
-        foreach ($players as $player) {
-          if ($player->isConnected() && $player !== $this) {
-            $player->sendSkin([$this]);
-          }
-        }
-      }
+      // Because Minecraft Bedrock was programmed terribly, we have to fix skins when players teleport as they can get steve glitched.
+      $this->sceneHelper?->notifyTeleported($pos);
 
       return true;
     }
@@ -453,31 +413,6 @@ class SwimPlayer extends Player
     }
 
     return false;
-  }
-
-  // This does not work, maybe it could with a delayed scheduled task though.
-  // Due to completely rewriting the Teleport code from scratch, we may have fixed all the problems.
-  public function ghostPlayerFix(): void
-  {
-    if (!$this->previousPositionBeforeTeleport) return;
-
-    if (SwimCore::$DEBUG) {
-      $posStr = PositionHelper::toString($this->previousPositionBeforeTeleport);
-      $worldStr = $this->previousPositionBeforeTeleport->getWorld()->getFolderName();
-      echo("{$this->getName()} | Despawn called at {$posStr} | {$worldStr}\n");
-    }
-
-    // I assume world position viewers is good enough? This gets the players who had that player entity in their loaded chunks client side.
-    // However, I don't know if this ghost player bug was an issue for players who had them outside their loaded chunks.
-    // What I mean by this is players could get ghost player bugged, then another client comes in and loads those chunks and sees the ghost.
-    // $players = $this->previousPositionBeforeTeleport->getWorld()->getViewersForPosition($this->previousPositionBeforeTeleport);
-    $players = $this->previousPositionBeforeTeleport->getWorld()->getPlayers(); // doing all players to be safe
-    foreach ($players as $player) {
-      if ($player !== $this && $this->id !== $player->getId()) {
-        $player->getNetworkSession()->sendDataPacket(RemoveActorPacket::create($this->id), true);
-        if (SwimCore::$DEBUG) echo("Despawning {$this->getName()} from {$player->getName()}\n}");
-      }
-    }
   }
 
   public function attack(EntityDamageEvent $source): void
@@ -601,15 +536,49 @@ class SwimPlayer extends Player
     return $this->ticksSinceLastTeleport;
   }
 
+  // Mirrors PocketMine behavior but makes sure to only call de-spawn from all once per tick on the next tick.
+  // Also messages anti cheat we changed game mode.
   public function setGamemode(GameMode $gm): bool
   {
-    $value = parent::setGamemode($gm);
+    if ($this->gamemode === $gm) {
+      return false;
+    }
+
+    $ev = new PlayerGameModeChangeEvent($this, $gm);
+    $ev->call();
+    if ($ev->isCancelled()) {
+      return false;
+    }
+
+    $tick = $this->server->getTick();
+    $this->internalSetGameMode($gm);
+
+    if ($this->isSpectator()) {
+      // Only call de-spawn from all once per tick
+      if ($this->tickSinceLastDespawnFromAll != $tick) {
+        $this->tickSinceLastDespawnFromAll = $tick;
+        $this->core->getScheduler()->scheduleDelayedTask(new ClosureTask(function () {
+          // If we've since changed game mode back out of spectator, abort.
+          if (!$this->isSpectator()) {
+            echo("Aborting scheduled game mode spectator despawnFromAll({$this->getName()})\n");
+            return;
+          }
+          $this->despawnFromAll();
+        }), 1);
+      } else if (SwimCore::$DEBUG) {
+        echo("Already queued despawnFromAll({$this->getName()}) from spectator game mode change\n");
+      }
+    } else {
+      $this->spawnToAll();
+    }
+
+    $this->getNetworkSession()->syncGameMode($this->gamemode);
 
     // tell the anti cheat we changed game mode, so we can handle when needed
     $this->antiCheatData?->changedGameMode();
     $this->ticksSinceLastGameModeChange = 0;
 
-    return $value;
+    return true;
   }
 
   public function isInScene(string $sceneName): bool
@@ -925,12 +894,14 @@ class SwimPlayer extends Player
   public function getHearts(float $damage = 0): float
   {
     $hp = ($this->getHealth() + $this->getAbsorption()) - $damage;
-    if ($hp > 0) {
-      // Divide by 2 to convert health to hearts, then round to the nearest 0.5
-      return max(round(($hp / 2) * 2) / 2, 0);
+
+    if ($hp <= 0) {
+      return 0.0;
     }
 
-    return 0;
+    // Health is in half-hearts; HUD rounds up to the next half-heart
+    return ceil($hp) / 2.0;
   }
+
 
 }

@@ -18,9 +18,7 @@ abstract class BaseBox extends TNT
   public function __construct()
   {
     $block = VanillaBlocks::TNT();
-    $typeID = $block->getTypeId();
-
-    parent::__construct(new BlockIdentifier($typeID), "Custom TNT", new BlockTypeInfo($block->getBreakInfo()));
+    parent::__construct(new BlockIdentifier($block->getTypeId()), "Custom TNT", new BlockTypeInfo($block->getBreakInfo()));
   }
 
   public function prepareTNT(Block $blockReplace, SwimPlayer $player): SmoothPrimedTNT

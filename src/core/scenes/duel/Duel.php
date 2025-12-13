@@ -23,10 +23,12 @@ use pocketmine\event\entity\EntityDamageByChildEntityEvent;
 use pocketmine\event\entity\EntityDamageByEntityEvent;
 use pocketmine\event\entity\EntityDamageEvent;
 use pocketmine\event\player\PlayerItemUseEvent;
+use pocketmine\math\Vector3;
 use pocketmine\network\mcpe\protocol\types\InputMode;
 use pocketmine\player\GameMode;
 use pocketmine\Server;
 use pocketmine\utils\TextFormat;
+use pocketmine\world\Position;
 use pocketmine\world\World;
 use ReflectionException;
 
@@ -57,6 +59,8 @@ abstract class Duel extends PvP
   protected bool $updateScoreBoardEachSecond;
   protected bool $alwaysAllowSpecs = false;
 
+  protected float $specDistance = 140;
+
   /**
    * @var SwimPlayer[]
    */
@@ -69,7 +73,7 @@ abstract class Duel extends PvP
     parent::__construct($core, $name);
     $this->seconds = 0;
     $this->duelCountDownTime = 5;
-    $this->warpUnits = 25;
+    $this->warpUnits = 15;
     $this->started = false;
     $this->finished = false;
     $this->isDuel = true;
@@ -122,52 +126,111 @@ abstract class Duel extends PvP
     return $this->map;
   }
 
-  // add in player team positions before doing this!
-  public final function warpPlayersIn(bool $lookAt = true): void
+  public function shouldLookAt(): bool
+  {
+    return true;
+  }
+
+  /**
+   * @brief add in player team positions before calling this!
+   * @param bool $lookAt
+   * @param null|callable(SwimPlayer, Position): void $callback to override teleport() call on player
+   */
+  public function warpPlayersIn(bool $lookAt = true, ?callable $callback = null): void
   {
     $teams = $this->teamManager->getTeams();
+    if (empty($teams)) {
+      return;
+    }
+
+    $teamCount = count($teams);
+    $center = null;
+
+    if ($this->spawnCloser && $teamCount > 1) {
+      $center = $this->computeTeamsCenter($teams);
+    }
+
     foreach ($teams as $team) {
       $spawnPoints = $team->getSpawnPoints();
       if (empty($spawnPoints)) {
         continue; // Skip if there are no spawn points
       }
 
-      // Will use this later for moving to next spawn point while iterating the team players
       $count = count($spawnPoints);
-      $teamCount = count($teams);
-
       $spawnIndex = 0;
+
       $players = $team->getPlayers();
       foreach ($players as $player) {
         $spawnPos = $spawnPoints[$spawnIndex];
 
-        // Check if players need to be spawned closer to another team's spawn point
-        if ($this->spawnCloser && $teamCount > 1) {
-          // Find the first spawn point of the first other team which will be used to move closer to
-          foreach ($teams as $otherTeam) {
-            $otherSpawns = $otherTeam->getSpawnPoints();
-            if ($otherTeam !== $team && !empty($otherSpawns)) {
-              $pos0 = $otherSpawns[0]; // first spawn
-              // Calculate new position to move closer by warp units
-              $spawnPos = PositionHelper::moveCloserTo($spawnPos, $pos0, $this->warpUnits);
-              break; // only need to do this once
-            }
-          }
+        // Pull each spawn in/out around the shared center if enabled (will be null if spawnCloser is false)
+        if ($center !== null) {
+          // All spawns are placed at exactly warpUnits blocks away from the shared center
+          $spawnPos = PositionHelper::placeApartXZ($spawnPos, $center, $this->warpUnits);
         }
 
-        // Teleport player to either the original or modified position
-        $player->teleport($spawnPos);
+        if ($callback !== null) {
+          $callback($player, $spawnPos);
+        } else {
+          $this->teleportToTheirSpawnPoint($player, $spawnPos);
+        }
 
         if ($this->lockMovement) {
-          $player->setNoClientPredictions(); // Prevent movement
+          $player->setNoClientPredictions();
         }
 
-        // Move to the next spawn point or loop back
         $spawnIndex = ($spawnIndex + 1) % $count;
       }
     }
 
-    if ($lookAt) $this->teamManager->lookAtEachOther();
+    if ($lookAt) {
+      $this->teamManager->lookAtEachOther();
+    }
+  }
+
+  protected function teleportToTheirSpawnPoint(SwimPlayer $player, Position $pos): void
+  {
+    if (SwimCore::$DEBUG) {
+      echo("Vanilla teleport Duel\n");
+    }
+    $player->teleport($pos);
+  }
+
+  /**
+   * @param Team[] $teams
+   * @return Position|null
+   */
+  private function computeTeamsCenter(array $teams): ?Position
+  {
+    $sumX = 0.0;
+    $sumY = 0.0;
+    $sumZ = 0.0;
+    $count = 0;
+
+    foreach ($teams as $team) {
+      $spawns = $team->getSpawnPoints();
+      if (empty($spawns) || $team->isSpecTeam()) {
+        continue;
+      }
+
+      $p0 = $spawns[0];
+
+      $sumX += $p0->x;
+      $sumY += $p0->y;
+      $sumZ += $p0->z;
+      $count++;
+    }
+
+    if ($count === 0) {
+      return null;
+    }
+
+    return new Position(
+      $sumX / $count,
+      $sumY / $count,
+      $sumZ / $count,
+      $this->world
+    );
   }
 
   public function sceneEntityDamageByEntityEvent(EntityDamageByEntityEvent $event, SwimPlayer $swimPlayer): void
@@ -260,8 +323,8 @@ abstract class Duel extends PvP
   protected function defaultDeathHandle(SwimPlayer $attacker, SwimPlayer $victim): void
   {
     if ($this->isPartyDuel) {
-      $victimStr = $victim->getRank()->rankString();
-      $attacker->sendMessage(TextFormat::GREEN . "You Killed " . $victimStr);
+      // $victimStr = $victim->getRank()->rankString();
+      // $attacker->sendMessage(TextFormat::GREEN . "You Killed " . $victimStr); // kind of too much spam
       // $this->sceneAnnouncement($attacker->getRank()->rankString() . TextFormat::YELLOW . " Killed " . $victimStr);
       $myTeam = $this->getPlayerTeam($attacker);
       $loserTeam = $this->getPlayerTeam($victim);
@@ -327,13 +390,15 @@ abstract class Duel extends PvP
   }
 
   /**
-   * Fills out the first 3 lines of the board, so you must set the next line at 4
+   * Fills out the first few lines of the board, returns which index the previous line is (1 index based)
    * @param SwimPlayer $player
+   * @return int
    * @throws ScoreFactoryException
    */
-  protected function startDuelScoreBoard(SwimPlayer $player): void
+  protected function startDuelScoreBoard(SwimPlayer $player): int
   {
-    $player->refreshScoreboard(TextFormat::AQUA . "Swimgg.club");
+    $line = 0;
+    $player->refreshScoreboard("§bswimgg.§3club");
     ScoreFactory::sendObjective($player);
 
     // variables needed
@@ -341,17 +406,9 @@ abstract class Duel extends PvP
     $time = TimeHelper::digitalClockFormatter($this->seconds);
 
     // define starting lines
-    ScoreFactory::setScoreLine($player, 1, " §bPing: §3" . $ping);
-    ScoreFactory::setScoreLine($player, 2, " §bTime: §3" . $time);
-  }
-
-  /**
-   * @throws ScoreFactoryException
-   */
-  protected function submitScoreboardWithBottomFromLine(SwimPlayer $player): void
-  {
-    // ScoreFactory::setScoreLine($player, $line, " §bdiscord.gg/§3swim"); // promotion was kinda shoved down your throat for no reason
-    ScoreFactory::sendLines($player);
+    ScoreFactory::setScoreLine($player, ++$line, " §bPing: §3" . $ping);
+    ScoreFactory::setScoreLine($player, ++$line, " §bTime: §3" . $time);
+    return $line;
   }
 
   /**
@@ -374,8 +431,9 @@ abstract class Duel extends PvP
   {
     if ($player->isScoreboardEnabled()) {
       try {
-        $this->startDuelScoreBoard($player);
-        $this->submitScoreboardWithBottomFromLine($player);
+        $lines = $this->startDuelScoreBoard($player);
+        ScoreFactory::setScoreLine($player, ++$lines, " §bswimgg.§3club");
+        ScoreFactory::sendLines($player);
       } catch (ScoreFactoryException $e) {
         Server::getInstance()->getLogger()->info($e->getMessage());
       }
@@ -387,16 +445,14 @@ abstract class Duel extends PvP
    */
   protected function duelScoreboardWithScoreSpectator(SwimPlayer $player): void
   {
-    $this->startDuelScoreBoard($player);
-    $line = 3;
+    $line = $this->startDuelScoreBoard($player);
     // Now iterate all the other teams and paste in their scores underneath with their team color
     foreach ($this->teamManager->getTeams() as $team) {
       if ($team->isSpecTeam()) continue; // skip spectator teams
       ScoreFactory::setScoreLine($player, ++$line, " " . $team->getFormattedScore()); // place the line for the other team's score
     }
-
-    // Send all lines to scoreboard
-    $this->submitScoreboardWithBottomFromLine($player);
+    ScoreFactory::setScoreLine($player, ++$line, " §bswimgg.§3club");
+    ScoreFactory::sendLines($player);
   }
 
   /**
@@ -414,27 +470,27 @@ abstract class Duel extends PvP
         }
 
         // scoreboard format helpers and stuff
-        $this->startDuelScoreBoard($player);
+        $lines = $this->startDuelScoreBoard($player);
 
-        $kills = $player->getAttributes()->getAttribute("kills") ?? 0;
-        $deaths = $player->getAttributes()->getAttribute("deaths") ?? 0;
-        $kdr = $deaths > 0 ? round($kills / $deaths, 1) : $kills;  // KDR calculated and rounded to one decimal place
-        $spacer = TextFormat::GRAY . " | ";
-        $kdrText = TextFormat::GREEN . " K: " . $kills . $spacer . TextFormat::DARK_RED . "D: " . $deaths . $spacer . TextFormat::YELLOW . "R: " . $kdr;
+        // $kills = $player->getAttributes()->getAttribute("kills") ?? 0;
+        // $deaths = $player->getAttributes()->getAttribute("deaths") ?? 0;
+        // $kdr = $deaths > 0 ? round($kills / $deaths, 1) : $kills;  // KDR calculated and rounded to one decimal place
+        // $spacer = TextFormat::GRAY . " | ";
+        // $kdrText = TextFormat::GREEN . " K: " . $kills . $spacer . TextFormat::DARK_RED . "D: " . $deaths . $spacer . TextFormat::YELLOW . "R: " . $kdr;
 
         // put in our score since we are an in-game team
-        ScoreFactory::setScoreLine($player, 3, $kdrText);  // Display KDR above scores
-        ScoreFactory::setScoreLine($player, 4, " " . $myTeam->getFormattedScore());
-        $line = 4; // Adjust line count since KDR was added
+        // ScoreFactory::setScoreLine($player, ++$lines, $kdrText);  // Display KDR above scores
+        ScoreFactory::setScoreLine($player, ++$lines, " " . $myTeam->getFormattedScore());
 
         // Now iterate all the other teams and paste in their scores underneath with their team color
         foreach ($this->teamManager->getTeams() as $team) {
           if ($team === $myTeam || $team->isSpecTeam()) continue; // skip our self and spectator teams
-          ScoreFactory::setScoreLine($player, ++$line, " " . $team->getFormattedScore()); // place the line for the other team's score
+          ScoreFactory::setScoreLine($player, ++$lines, " " . $team->getFormattedScore()); // place the line for the other team's score
         }
 
         // Send all lines to scoreboard
-        $this->submitScoreboardWithBottomFromLine($player);
+        ScoreFactory::setScoreLine($player, ++$lines, " §bswimgg.§3club");
+        ScoreFactory::sendLines($player);
       } catch (ScoreFactoryException $e) {
         Server::getInstance()->getLogger()->info($e->getMessage());
       }
@@ -460,9 +516,26 @@ abstract class Duel extends PvP
       return;
     }
 
+    // Get a mid-point between the two teams that a duel usually has for spectator warping back
+    $team1 = $this->teamManager->getTeamByColor(TextFormat::RED);
+    $team2 = $this->teamManager->getTeamByColor(TextFormat::BLUE);
+    if ($team1 !== null && $team2 !== null) {
+      // Very bad if we cant get spawn points for whatever reason
+      $midPoint = PositionHelper::midPoint(
+        $team1->getSpawnPoint(0) ?? Vector3::zero(), $team2->getSpawnPoint(0) ?? Vector3::zero()
+      );
+    } else {
+      // Usually does not work
+      $midPoint = PositionHelper::midPoint(
+        PositionHelper::vecToPos($this->map->getSpawnPos1(), $this->world), PositionHelper::vecToPos($this->map->getSpawnPos2(), $this->world)
+      );
+    }
+
     // updates all players scoreboards and score tags each second
     foreach ($this->players as $player) {
       if (!$player->isConnected()) continue; // safety to fix a super rare crash
+
+      $this->stayCloseSpec($player, $midPoint, $this->specDistance);
 
       if ($this->updateScoreBoardEachSecond) $this->duelScoreboard($player);
       if ($this->updateScoreTagEachSecond) $this->duelScoreTag($player);
@@ -839,6 +912,18 @@ abstract class Duel extends PvP
     }
 
     return false;
+  }
+
+  // Works only for duels with 2 teams
+  protected function partyWin(Team $winners, Team $losers, string $duelName): void
+  {
+    $bf = TextFormat::GRAY . "(" . TextFormat::AQUA . $duelName . TextFormat::GRAY . ")" . TextFormat::RESET . " ";
+    $winnerColor = $winners->getTeamColor();
+    $loserColor = $winnerColor === TextFormat::RED ? TextFormat::BLUE : TextFormat::RED;
+    $msg = $winnerColor . $winners->getTeamName() . TextFormat::YELLOW . " Defeated " . $loserColor . $losers->getTeamName();
+    // $this->core->getServer()->broadcastMessage($bf . $msg);
+    $this->core->getSystemManager()->getSceneSystem()->getScene("Hub")?->sceneAnnouncement($bf . $msg);
+    $this->sceneAnnouncement($bf . $msg);
   }
 
 }

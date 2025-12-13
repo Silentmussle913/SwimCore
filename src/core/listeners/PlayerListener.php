@@ -48,6 +48,8 @@ use pocketmine\event\player\PlayerJumpEvent;
 use pocketmine\event\player\PlayerQuitEvent;
 use pocketmine\event\player\PlayerToggleFlightEvent;
 use pocketmine\event\server\DataPacketReceiveEvent;
+use pocketmine\scheduler\ClosureTask;
+use pocketmine\utils\TextFormat;
 use pocketmine\world\Position;
 
 class PlayerListener implements Listener
@@ -64,7 +66,7 @@ class PlayerListener implements Listener
     $this->playerSystem = $this->systemManager->getPlayerSystem();
   }
 
-  public function onPlayerConstructed(PlayerCreationEvent $event)
+  public function onPlayerConstructed(PlayerCreationEvent $event): void
   {
     $event->setPlayerClass(SwimPlayer::class);
   }
@@ -74,7 +76,7 @@ class PlayerListener implements Listener
   /**
    * @throws ScoreFactoryException
    */
-  public function onJoin(PlayerJoinEvent $event)
+  public function onJoin(PlayerJoinEvent $event): void
   {
     if ($this->core->getRegionInfo()->autoTransfer !== "") {
       [$ip, $port] = ParseIP::sepIpFromPort($this->core->getRegionInfo()->autoTransfer);
@@ -97,7 +99,7 @@ class PlayerListener implements Listener
   }
 
   // leave handling
-  public function onQuit(PlayerQuitEvent $event)
+  public function onQuit(PlayerQuitEvent $event): void
   {
     if ($this->core->getRegionInfo()->autoTransfer !== "") {
       $event->setQuitMessage("");
@@ -105,7 +107,12 @@ class PlayerListener implements Listener
     }
     /* @var SwimPlayer $player */
     $player = $event->getPlayer();
-    $event->setQuitMessage("§c[-] §e" . $player->getDisplayName());
+    $com = $player->getCosmetics();
+    $color = TextFormat::GRAY;
+    if (isset($com)) {
+      $color = $com->getNameColor();
+    }
+    $event->setQuitMessage("§c[-] $color" . $player->getDisplayName());
 
     // telemetry messaging
     $server = $player->getServer();
@@ -128,7 +135,7 @@ class PlayerListener implements Listener
   }
 
   // chat handling (would we want to make this a scriptable event later on?)
-  public function onChat(PlayerChatEvent $event)
+  public function onChat(PlayerChatEvent $event): void
   {
     /* @var SwimPlayer $player */
     $player = $event->getPlayer();
@@ -140,7 +147,7 @@ class PlayerListener implements Listener
 
   // we have to parse all damage events in this single function because of how pm does polymorphism for damage events
   // for example, EntityDamageByEntityEvent or EntityDamageByChildEntityEvent triggers an EntityDamageEvent
-  public function damageCallback(EntityDamageEvent $event)
+  public function damageCallback(EntityDamageEvent $event): void
   {
     // prevent switch hits
     if ($event->getModifier(EntityDamageEvent::MODIFIER_PREVIOUS_DAMAGE_COOLDOWN) < 0) {
@@ -211,7 +218,7 @@ class PlayerListener implements Listener
     }
   }
 
-  public function onItemSpawn(ItemSpawnEvent $event)
+  public function onItemSpawn(ItemSpawnEvent $event): void
   {
     $itemEntity = $event->getEntity();
     if (!($itemEntity instanceof EasierPickUpItemEntity)) {
@@ -234,7 +241,7 @@ class PlayerListener implements Listener
   }
 
   /* disabled because this removes a major optimization with item stacks in the world by mutating data
-  public function onDespawn(EntityDespawnEvent $event)
+  public function onDespawn(EntityDespawnEvent $event): void
   {
     $entity = $event->getEntity();
     if ($entity instanceof ItemEntity) {
@@ -250,7 +257,7 @@ class PlayerListener implements Listener
   }
   */
 
-  public function itemDropCallback(PlayerDropItemEvent $event)
+  public function itemDropCallback(PlayerDropItemEvent $event): void
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
@@ -263,7 +270,7 @@ class PlayerListener implements Listener
    * @priority HIGHEST
    * @handleCancelled
    */
-  public function itemUseCallback(PlayerItemUseEvent $event)
+  public function itemUseCallback(PlayerItemUseEvent $event): void
   {
     $event->uncancel(); // this should never be cancelled before this listener is hit, this side steps around the spectator item use event always being cancelled
     /* @var SwimPlayer $sp */
@@ -274,7 +281,7 @@ class PlayerListener implements Listener
   }
 
   // this could be expensive
-  public function inventoryUseCallback(InventoryTransactionEvent $event)
+  public function inventoryUseCallback(InventoryTransactionEvent $event): void
   {
     /* @var SwimPlayer $player */
     $player = $event->getTransaction()->getSource();
@@ -321,7 +328,7 @@ class PlayerListener implements Listener
     }
   }
 
-  public function entityTeleportCallback(EntityTeleportEvent $event)
+  public function entityTeleportCallback(EntityTeleportEvent $event): void
   {
     $player = $event->getEntity();
     if (!($player instanceof SwimPlayer)) return;
@@ -330,7 +337,7 @@ class PlayerListener implements Listener
     $player->getSceneHelper()?->getScene()->sceneEntityTeleportEvent($event, $player);
   }
 
-  public function playerConsumeCallback(PlayerItemConsumeEvent $event)
+  public function playerConsumeCallback(PlayerItemConsumeEvent $event): void
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
@@ -339,7 +346,7 @@ class PlayerListener implements Listener
     $sp->getSceneHelper()?->getScene()->scenePlayerConsumeEvent($event, $sp);
   }
 
-  public function playerPickupItem(EntityItemPickupEvent $event)
+  public function playerPickupItem(EntityItemPickupEvent $event): void
   {
     $player = $event->getEntity();
     if (!($player instanceof SwimPlayer)) return;
@@ -348,7 +355,7 @@ class PlayerListener implements Listener
     $player->getSceneHelper()?->getScene()->scenePlayerPickupItem($event, $player);
   }
 
-  public function projectileLaunchCallback(ProjectileLaunchEvent $event)
+  public function projectileLaunchCallback(ProjectileLaunchEvent $event): void
   {
     $player = $event->getEntity()->getOwningEntity();
     if (!($player instanceof SwimPlayer)) return;
@@ -358,7 +365,7 @@ class PlayerListener implements Listener
   }
 
   // this is intended for when a player's thrown projectile hits (be careful with this)
-  public function projectileHitCallback(ProjectileHitEvent $event)
+  public function projectileHitCallback(ProjectileHitEvent $event): void
   {
     $player = $event->getEntity()->getOwningEntity();
     if (!($player instanceof SwimPlayer)) return;
@@ -366,7 +373,7 @@ class PlayerListener implements Listener
     $player->getSceneHelper()?->getScene()->sceneProjectileHitEvent($event, $player);
   }
 
-  public function entityRegainHealthCallback(EntityRegainHealthEvent $event)
+  public function entityRegainHealthCallback(EntityRegainHealthEvent $event): void
   {
     $player = $event->getEntity();
     if (!($player instanceof SwimPlayer)) return;
@@ -376,7 +383,7 @@ class PlayerListener implements Listener
   }
 
   // this is intended for when the thrower hits an entity
-  public function projectileHitEntityCallback(ProjectileHitEntityEvent $event)
+  public function projectileHitEntityCallback(ProjectileHitEntityEvent $event): void
   {
     $entityHit = $event->getEntityHit();
     if ($entityHit instanceof SwimPlayer) {
@@ -388,13 +395,13 @@ class PlayerListener implements Listener
   }
 
   /* turned off for performance reasons, we only do this for chest interaction if you scroll up
-  public function playerInteractCallback(PlayerInteractEvent $event)
+  public function playerInteractCallback(PlayerInteractEvent $event): void
   {
 
   }
   */
 
-  public function entitySpawnCallback(EntitySpawnEvent $event)
+  public function entitySpawnCallback(EntitySpawnEvent $event): void
   {
     $entity = $event->getEntity();
     $owner = $entity->getOwningEntity();
@@ -404,16 +411,68 @@ class PlayerListener implements Listener
     }
   }
 
-  public function blockPlaceCallback(BlockPlaceEvent $event)
+  public function blockPlaceCallback(BlockPlaceEvent $event): void
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
+
+    // Should the event behavior manager have priority over the scene they are in?
     $sp->event($event, BehaviorEventEnum::BLOCK_PLACE_EVENT);
-    if ($event->isCancelled()) return;
+
+    if ($event->isCancelled()) {
+      return;
+    }
+
     $sp->getSceneHelper()?->getScene()->sceneBlockPlaceEvent($event, $sp);
+
+    // Fixes ghost web bugs due to being able to place webs really quickly.
+    if ($sp->isConnected()) {
+      foreach ($event->getTransaction()->getBlocks() as [$x, $y, $z, $block]) {
+        if ($block->getTypeId() == BlockTypeIds::COBWEB) {
+          $inventory = $sp->getInventory();
+          $slot = $inventory->getHeldItemIndex(); // archive the slot webs were placed from
+          // If you have less than 40 ping the delay is only 2 ticks, otherwise 5 ticks for higher ping players
+          // $delay = $sp->getNetworkSession()?->getPing() <= 40 ? 2 : 5;
+          $delay = 2; // some higher ping players were complaining about their hot bar hotkeys de-syncing, so we are going to try out 2 for everyone.
+
+          // Delay so the transaction + inventory changes settle first
+          $this->core->getScheduler()->scheduleDelayedTask(
+            new ClosureTask(function () use ($sp, $inventory, $slot): void {
+              if (!$sp->isConnected()) {
+                return;
+              }
+
+              if (!$inventory->slotExists($slot)) {
+                return;
+              }
+
+              $session = $sp->getNetworkSession();
+              $invManager = $session->getInvManager();
+
+              // Ensure InventoryManager is tracking this slot, or syncSlot() will throw an exception
+              if ($invManager->getItemStackInfo($inventory, $slot) === null) {
+                return;
+              }
+
+              $typeConverter = $session->getTypeConverter();
+              $itemStack = $typeConverter->coreItemStackToNet($inventory->getItem($slot));
+              $invManager->syncSlot($inventory, $slot, $itemStack);
+
+              if (SwimCore::$DEBUG) {
+                echo("Syncing hot bar web hack for {$sp->getName()} at inventory slot {$slot}\n");
+              }
+            }),
+            $delay // ticks
+          );
+
+          // Done since we got a web
+          return;
+        }
+      }
+    }
   }
 
-  public function blockBreakCallback(BlockBreakEvent $event)
+  public function blockBreakCallback(BlockBreakEvent $event): void
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
@@ -428,7 +487,7 @@ class PlayerListener implements Listener
     }
   }
 
-  public function bucketEmpty(PlayerBucketEmptyEvent $event)
+  public function bucketEmpty(PlayerBucketEmptyEvent $event): void
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
@@ -444,7 +503,7 @@ class PlayerListener implements Listener
     }
   }
 
-  public function bucketFill(PlayerBucketFillEvent $event)
+  public function bucketFill(PlayerBucketFillEvent $event): void
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
@@ -453,12 +512,12 @@ class PlayerListener implements Listener
     $sp->getSceneHelper()?->getScene()->sceneBucketFillEvent($event, $sp);
   }
 
-  public function blockSpread(BlockSpreadEvent $event)
+  public function blockSpread(BlockSpreadEvent $event): void
   {
     $this->handleNaturalEvent($event);
   }
 
-  public function blockForm(BlockFormEvent $event)
+  public function blockForm(BlockFormEvent $event): void
   {
     $this->handleNaturalEvent($event);
   }
@@ -480,7 +539,7 @@ class PlayerListener implements Listener
     return $nearest?->getSceneHelper()?->getScene();
   }
 
-  public function startFlying(PlayerToggleFlightEvent $event)
+  public function startFlying(PlayerToggleFlightEvent $event): void
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
@@ -489,7 +548,7 @@ class PlayerListener implements Listener
     $sp->getSceneHelper()?->getScene()->scenePlayerToggleFlightEvent($event, $sp);
   }
 
-  public function jumped(PlayerJumpEvent $event)
+  public function jumped(PlayerJumpEvent $event): void
   {
     /* @var SwimPlayer $sp */
     $sp = $event->getPlayer();
@@ -497,7 +556,7 @@ class PlayerListener implements Listener
     $sp->getSceneHelper()?->getScene()->scenePlayerJumpEvent($event, $sp);
   }
 
-  public function dataPacketReceiveEvent(DataPacketReceiveEvent $event)
+  public function dataPacketReceiveEvent(DataPacketReceiveEvent $event): void
   {
     $player = $event->getOrigin()?->getPlayer();
     if (!isset($player)) return;

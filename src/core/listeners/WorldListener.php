@@ -25,6 +25,7 @@ use pocketmine\event\block\BlockMeltEvent;
 use pocketmine\event\block\LeavesDecayEvent;
 use pocketmine\event\entity\EntityDamageEvent;
 use pocketmine\event\entity\EntitySpawnEvent;
+use pocketmine\event\entity\EntityTrampleFarmlandEvent;
 use pocketmine\event\Event;
 use pocketmine\event\inventory\InventoryCloseEvent;
 use pocketmine\event\inventory\InventoryOpenEvent;
@@ -38,6 +39,8 @@ use pocketmine\event\server\DataPacketReceiveEvent;
 use pocketmine\event\server\DataPacketSendEvent;
 use pocketmine\event\server\QueryRegenerateEvent;
 use pocketmine\event\world\WorldLoadEvent;
+use pocketmine\inventory\PlayerCursorInventory;
+use pocketmine\inventory\PlayerInventory;
 use pocketmine\inventory\PlayerOffHandInventory;
 use pocketmine\inventory\transaction\action\SlotChangeAction;
 use pocketmine\item\ConsumableItem;
@@ -71,6 +74,7 @@ use pocketmine\network\mcpe\protocol\SetActorMotionPacket;
 use pocketmine\network\mcpe\protocol\SetPlayerGameTypePacket;
 use pocketmine\network\mcpe\protocol\SetTimePacket;
 use pocketmine\network\mcpe\protocol\StartGamePacket;
+use pocketmine\network\mcpe\protocol\TextPacket;
 use pocketmine\network\mcpe\protocol\types\ActorEvent;
 use pocketmine\network\mcpe\protocol\types\BoolGameRule;
 use pocketmine\network\mcpe\protocol\types\command\CommandOriginData;
@@ -85,6 +89,7 @@ use pocketmine\network\mcpe\protocol\types\resourcepacks\ResourcePackStackEntry;
 use pocketmine\player\GameMode;
 use pocketmine\player\Player;
 use pocketmine\player\XboxLivePlayerInfo;
+use pocketmine\scheduler\ClosureTask;
 use pocketmine\world\format\io\BaseWorldProvider;
 use pocketmine\world\World;
 use ReflectionClass;
@@ -160,6 +165,33 @@ class WorldListener implements Listener
     }
   }
 
+  /* not active anymore
+  public function onGameModeChange(PlayerGameModeChangeEvent $event): void
+  {
+    /* @var SwimPlayer $player */
+  /*
+    $player = $event->getPlayer();
+    if ($player->getGamemode() == GameMode::SPECTATOR) {
+      if (SwimCore::$DEBUG) {
+        echo("Scuffed spectator gamemode change skin fix on {$player->getName()}\n");
+      }
+      $player->sendSkin($player->getPlayersWeShouldSendOurSkinTo());
+    }
+  }
+  */
+
+
+  /**
+   * Desperate steve glitch skin fix due to the client aggressively unloading skins from players far away.
+   * This gets called A LOT, so skin refresh has to be implemented smartly
+   * @deprecated not needed anymore, literally brought more errors than it solved in terms of performance for the one verison this was a bug on.
+   * public function onChunkLoad(PlayerPostChunkSendEvent $event): void
+   * {
+   * $player = $event->getPlayer();
+   * $player->getSceneHelper()?->skinRefresh();
+   * }
+   */
+
   public function cacheArmorSounds(): void
   {
     $refl = new ReflectionClass(LevelSoundEvent::class);
@@ -189,7 +221,7 @@ class WorldListener implements Listener
   }
 
   // void can't kill unless we are really low
-  public function onEntityVoid(EntityDamageEvent $event)
+  public function onEntityVoid(EntityDamageEvent $event): void
   {
     if ($event->getCause() == EntityDamageEvent::CAUSE_VOID) {
       $entity = $event->getEntity();
@@ -199,7 +231,7 @@ class WorldListener implements Listener
     }
   }
 
-  public function onLeavesDecay(LeavesDecayEvent $event)
+  public function onLeavesDecay(LeavesDecayEvent $event): void
   {
     $event->cancel();
   }
@@ -220,7 +252,7 @@ class WorldListener implements Listener
   }
 
   // cancels trying to use beds and cancels door opens in the hub
-  public function hubBlockInteract(PlayerInteractEvent $event)
+  public function hubBlockInteract(PlayerInteractEvent $event): void
   {
     // No sleeping!
     if ($event->getAction() == PlayerInteractEvent::RIGHT_CLICK_BLOCK && $event->getBlock()->getTypeId() == BlockTypeIds::BED) {
@@ -237,14 +269,397 @@ class WorldListener implements Listener
     }
   }
 
-  // remove offhand functionality
-  public function preventOffHanding(InventoryTransactionEvent $event)
+  /** Disable offhand functionality and fix items not stacking to other compatible slots
+   * when shift clicking on an item with a custom name and type id that matches.
+   * @priority HIGHEST
+   */
+  public function fixTransaction(InventoryTransactionEvent $event): void
   {
-    $inventories = $event->getTransaction()->getInventories();
+    $doLog = SwimCore::$DEBUG;
+    $transaction = $event->getTransaction();
+    $player = $transaction->getSource();
+
+    if ($doLog) {
+      echo("[InvFix] === New transaction from player ===\n");
+    }
+
+    $inventories = $transaction->getInventories();
+
+    // 1. Disable offhand completely
     foreach ($inventories as $inventory) {
       if ($inventory instanceof PlayerOffHandInventory) {
+        if ($doLog) {
+          echo("[InvFix] Found PlayerOffHandInventory in transaction, cancelling.\n");
+        }
         $event->cancel();
+        return;
       }
+    }
+
+    // Only apply the stacking hack when the transaction actually involves:
+    // - the player's inventory, AND
+    // - some other "real" inventory (chest, custom container, etc.),
+    // NOT just the cursor.
+    $playerInventory = $player->getInventory();
+
+    $hasRealOtherInventory = false;
+
+    foreach ($inventories as $inventory) {
+      if (
+        !$inventory instanceof PlayerInventory &&
+        !$inventory instanceof PlayerOffHandInventory &&
+        !$inventory instanceof PlayerCursorInventory
+      ) {
+        $hasRealOtherInventory = true;
+        if ($doLog) {
+          echo("[InvFix] Detected real other inventory of type " . get_class($inventory) . " in transaction.\n");
+        }
+      } elseif ($inventory instanceof PlayerCursorInventory) {
+        if ($doLog) {
+          echo("[InvFix] Detected PlayerCursorInventory in transaction (cursor). Ignoring as 'real other inventory'.\n");
+        }
+      }
+    }
+
+    if (!$hasRealOtherInventory) {
+      if ($doLog) {
+        echo("[InvFix] No real other inventory involved (only player inventory + cursor/etc). Letting vanilla behavior handle it.\n");
+      }
+      return;
+    }
+
+    if ($doLog) {
+      echo("[InvFix] Real other inventory present. Checking actions for custom named stackable moves into player inventory...\n");
+    }
+
+    foreach ($transaction->getActions() as $action) {
+      if (!$action instanceof SlotChangeAction) {
+        if ($doLog) {
+          echo("[InvFix] Skipping non-slot action.\n");
+        }
+        continue;
+      }
+
+      $inventory = $action->getInventory();
+
+      // We only care about items that end up in the player's main inventory
+      if (!$inventory instanceof PlayerInventory) {
+        if ($doLog) {
+          echo("[InvFix] SlotChangeAction target inventory is not PlayerInventory (" . get_class($inventory) . "). Skipping.\n");
+        }
+        continue;
+      }
+
+      $slot = $action->getSlot();
+      $sourceItem = $action->getSourceItem();
+      $targetItem = $action->getTargetItem();
+
+      if ($doLog) {
+        echo("[InvFix] Considering PlayerInventory SlotChangeAction at slot {$slot}.\n");
+        echo("[InvFix]   Source: typeId=" . $sourceItem->getTypeId() . " customName='"
+          . $sourceItem->getCustomName() . "' count=" . $sourceItem->getCount() . "\n");
+        echo("[InvFix]   Target: typeId=" . $targetItem->getTypeId() . " customName='"
+          . $targetItem->getCustomName() . "' count=" . $targetItem->getCount() . "\n");
+      }
+
+      // Two patterns we care about:
+      // 1) Empty slot -> item  (AIR -> stack)  => normal "put into empty slot"
+      // 2) Existing stack -> bigger stack     => "stacking into existing slot"
+      $isEmptyToItem = $sourceItem->isNull() && !$targetItem->isNull();
+
+      $isStackIncrease =
+        !$sourceItem->isNull() &&
+        !$targetItem->isNull() &&
+        $sourceItem->getTypeId() === $targetItem->getTypeId() &&
+        $sourceItem->getCustomName() === $targetItem->getCustomName() &&
+        $targetItem->getCount() > $sourceItem->getCount();
+
+      if (!$isEmptyToItem && !$isStackIncrease) {
+        if ($doLog) {
+          echo("[InvFix]   Skipping: not an empty->item or stack-increase pattern.\n");
+        }
+        continue;
+      }
+
+      // Only bother with stackable items
+      $maxStackSize = min($targetItem->getMaxStackSize(), $playerInventory->getMaxStackSize());
+      if ($maxStackSize <= 1) {
+        if ($doLog) {
+          echo("[InvFix]   Skipping: item is not stackable (maxStackSize={$maxStackSize}).\n");
+        }
+        continue;
+      }
+
+      // Only hack for custom named items
+      if ($targetItem->getCustomName() === '') {
+        if ($doLog) {
+          echo("[InvFix]   Skipping: target item has no custom name, using vanilla behavior.\n");
+        }
+        continue;
+      }
+
+      // How many items is this action trying to add to the player inventory?
+      // - For empty->item, it's the entire target count.
+      // - For stack-increase, it's the delta between target and source counts.
+      if ($isEmptyToItem) {
+        $movedCount = $targetItem->getCount();
+      } else { // $isStackIncrease
+        $movedCount = $targetItem->getCount() - $sourceItem->getCount();
+      }
+
+      if ($movedCount <= 0) {
+        if ($doLog) {
+          echo("[InvFix]   Skipping: movedCount={$movedCount} (nothing to route).\n");
+        }
+        continue;
+      }
+
+      if ($doLog) {
+        echo("[InvFix]   Candidate for stacking hack: typeId=" . $targetItem->getTypeId()
+          . " customName='" . $targetItem->getCustomName()
+          . "', movedCount={$movedCount}.\n");
+        if ($isEmptyToItem) {
+          echo("[InvFix]   Pattern: EMPTY -> ITEM (new stack in slot {$slot}).\n");
+        } else {
+          echo("[InvFix]   Pattern: STACK INCREASE in slot {$slot}.\n");
+        }
+      }
+
+      // Track which slots we need to sync after our manual changes.
+      $playerSlotsToSync = []; // [slot => true]
+      $otherSlotsToSync = [];  // [[Inventory, slot], ...]
+
+      // If this was a stack-increase action, revert this slot back to the original
+      // state before we start re-routing items, so we don't double-count.
+      if ($isStackIncrease) {
+        $playerInventory->setItem($slot, $sourceItem);
+        $playerSlotsToSync[$slot] = true;
+        if ($doLog) {
+          echo("[InvFix]   Reverting slot {$slot} to original stack before custom routing.\n");
+        }
+      }
+
+      $remaining = $movedCount;
+      $merged = 0;
+
+      // First pass: fill existing stacks of the same type id + custom name that have space
+      for ($i = 0, $size = $playerInventory->getSize(); $i < $size && $remaining > 0; $i++) {
+        // We don't specially skip $slot here: if this was an EMPTY->ITEM case,
+        // the slot was empty, and our logic will treat it like any other slot.
+        // If it was STACK INCREASE, we just reverted it to the old stack
+        // and can also consider it as a candidate stacking slot.
+        $existing = $playerInventory->getItem($i);
+        if ($existing->isNull()) {
+          continue;
+        }
+
+        if ($existing->getTypeId() !== $targetItem->getTypeId()) {
+          continue;
+        }
+
+        if ($existing->getCustomName() !== $targetItem->getCustomName()) {
+          continue;
+        }
+
+        if ($existing->getCount() >= $maxStackSize) {
+          if ($doLog) {
+            echo("[InvFix]   Slot {$i}: matching stack full (typeId=" . $existing->getTypeId() . ", customName='"
+              . $existing->getCustomName() . "').\n");
+          }
+          continue;
+        }
+
+        $space = $maxStackSize - $existing->getCount();
+        if ($space <= 0) {
+          continue;
+        }
+
+        $move = min($remaining, $space);
+
+        if ($doLog) {
+          echo("[InvFix]   Stacking into slot {$i}:"
+            . " typeId=" . $existing->getTypeId()
+            . " customName='" . $existing->getCustomName() . "'"
+            . " currentCount=" . $existing->getCount()
+            . " move={$move}"
+            . " maxStackSize={$maxStackSize}"
+            . "\n"
+          );
+        }
+
+        $existing->setCount($existing->getCount() + $move);
+        $playerInventory->setItem($i, $existing);
+
+        $remaining -= $move;
+        $merged += $move;
+
+        $playerSlotsToSync[$i] = true;
+
+        if ($doLog) {
+          echo("[InvFix]   After stack: slot {$i} count=" . $existing->getCount() . ", remaining={$remaining}.\n");
+        }
+      }
+
+      // Second pass (only for EMPTY->ITEM): if we still have remaining and there
+      // are empty slots, place leftovers into the original target slot.
+      if ($isEmptyToItem && $remaining > 0) {
+        // Make sure the original slot is treated as the "fallback" destination.
+        $leftover = clone $targetItem;
+        $leftover->setCount($remaining);
+        $playerInventory->setItem($slot, $leftover);
+        $playerSlotsToSync[$slot] = true;
+
+        if ($doLog) {
+          echo("[InvFix]   Placed leftover stack in original target slot {$slot}:"
+            . " typeId=" . $leftover->getTypeId()
+            . " customName='" . $leftover->getCustomName() . "'"
+            . " count=" . $leftover->getCount()
+            . "\n"
+          );
+        }
+
+        $merged += $remaining;
+        $remaining = 0;
+      }
+
+      if ($merged > 0) {
+        if ($doLog) {
+          echo("[InvFix]   Merged {$merged} items into existing stacks for typeId=" . $targetItem->getTypeId()
+            . " customName='" . $targetItem->getCustomName() . "'.\n");
+        }
+
+        // We successfully re-routed at least some items, so we own the entire transaction now.
+        // Cancel the original transaction so PocketMine doesn't also try to apply it.
+        $event->cancel();
+        if ($doLog) {
+          echo("[InvFix]   Cancelled original transaction; applying manual adjustments.\n");
+        }
+
+        // The clicked slot in the *source* inventory will have been updated by other
+        // SlotChangeActions in the original transaction, but we cancelled that.
+        // We should clear/adjust it manually to emulate a full "move" from that inventory.
+        foreach ($transaction->getActions() as $other) {
+          if (!$other instanceof SlotChangeAction) {
+            continue;
+          }
+
+          // Skip player inventory; we only want to clear the "from" side in other inventories.
+          if ($other->getInventory() === $inventory) {
+            continue;
+          }
+
+          // Also skip cursor inventory – we explicitly don't want to hack cursor moves.
+          if ($other->getInventory() instanceof PlayerCursorInventory) {
+            if ($doLog) {
+              echo("[InvFix]   Skipping clear for PlayerCursorInventory slot " . $other->getSlot() . " (cursor).\n");
+            }
+            continue;
+          }
+
+          $otherSource = $other->getSourceItem();
+          $otherTarget = $other->getTargetItem();
+
+          // Typical pattern for moving from another inventory:
+          // sourceSlot: item -> AIR (target is null item) or decreased count.
+          if (!$otherSource->isNull()) {
+            $fromInv = $other->getInventory();
+            $fromSlot = $other->getSlot();
+
+            if ($doLog) {
+              echo("[InvFix]   Applying source inventory change at slot {$fromSlot}:"
+                . " typeId=" . $otherSource->getTypeId()
+                . " customName='" . $otherSource->getCustomName() . "'"
+                . " -> target typeId=" . $otherTarget->getTypeId()
+                . " customName='" . $otherTarget->getCustomName() . "'"
+                . " count=" . $otherTarget->getCount()
+                . "\n"
+              );
+            }
+
+            // We trust the chest-side target item (reduced stack / AIR) as-is.
+            $fromInv->setItem($fromSlot, $otherTarget);
+            $otherSlotsToSync[] = [$fromInv, $fromSlot];
+          }
+        }
+
+        // Force sync of all affected slots after a short delay so the client state matches the server.
+        if ($player->isConnected()) {
+          $delay = 1;
+
+          if ($doLog) {
+            echo("[InvFix]   Scheduling delayed sync for modified slots.\n");
+          }
+
+          $this->core->getScheduler()->scheduleDelayedTask(
+            new ClosureTask(function () use ($player, $playerInventory, $playerSlotsToSync, $otherSlotsToSync, $doLog): void {
+              if (!$player->isConnected()) {
+                return;
+              }
+
+              $session = $player->getNetworkSession();
+              $invManager = $session->getInvManager();
+              $typeConverter = $session->getTypeConverter();
+
+              // Sync player inventory slots we touched
+              foreach (array_keys($playerSlotsToSync) as $slot) {
+                if (!$playerInventory->slotExists($slot)) {
+                  continue;
+                }
+
+                if ($invManager->getItemStackInfo($playerInventory, $slot) === null) {
+                  continue;
+                }
+
+                $item = $playerInventory->getItem($slot);
+                $itemStack = $typeConverter->coreItemStackToNet($item);
+                $invManager->syncSlot($playerInventory, $slot, $itemStack);
+
+                if ($doLog) {
+                  echo("[InvFix]   [Sync] Player inv slot {$slot}: typeId=" . $item->getTypeId()
+                    . " customName='" . $item->getCustomName() . "' count=" . $item->getCount() . "\n");
+                }
+              }
+
+              // Sync source/container inventory slots we changed
+              foreach ($otherSlotsToSync as [$inv, $slot]) {
+                if (!$inv->slotExists($slot)) {
+                  continue;
+                }
+
+                if ($invManager->getItemStackInfo($inv, $slot) === null) {
+                  continue;
+                }
+
+                $item = $inv->getItem($slot);
+                $itemStack = $typeConverter->coreItemStackToNet($item);
+                $invManager->syncSlot($inv, $slot, $itemStack);
+
+                if ($doLog) {
+                  echo("[InvFix]   [Sync] Other inv slot {$slot}: typeId=" . $item->getTypeId()
+                    . " customName='" . $item->getCustomName() . "' count=" . $item->getCount() . "\n");
+                }
+              }
+            }),
+            $delay
+          );
+        }
+
+        if ($doLog) {
+          echo("[InvFix] === Finished custom stacking handling for this transaction ===\n");
+        }
+        // We handled this transaction completely; no need to check more actions.
+        return;
+      }
+
+      if ($doLog) {
+        echo("[InvFix]   No compatible stack found for typeId=" . $targetItem->getTypeId()
+          . " customName='" . $targetItem->getCustomName() . "'. Letting vanilla behavior handle it.\n");
+      }
+      // If merged == 0, we let PocketMine handle this normally.
+    }
+
+    if ($doLog) {
+      echo("[InvFix] Reached end of fixTransaction without intervening. Vanilla behavior used.\n");
     }
   }
 
@@ -277,7 +692,7 @@ class WorldListener implements Listener
   }
 
   // prevent player drops (be mindful of this event's existence if we are ever programming a game where we want entity drops to go somewhere like a chest)
-  public function onPlayerDeath(PlayerDeathEvent $event)
+  public function onPlayerDeath(PlayerDeathEvent $event): void
   {
     $event->setDrops([]);
     $event->setXpDropAmount(0);
@@ -316,7 +731,7 @@ class WorldListener implements Listener
   }
   */
 
-  public function onBlockFall(EntitySpawnEvent $event)
+  public function onBlockFall(EntitySpawnEvent $event): void
   {
     $fallingBlockEntity = $event->getEntity();
     if ($fallingBlockEntity instanceof FallingBlock) {
@@ -328,7 +743,7 @@ class WorldListener implements Listener
   }
 
   // never have exhaust
-  public function onExhaust(PlayerExhaustEvent $event)
+  public function onExhaust(PlayerExhaustEvent $event): void
   {
     $event->cancel();
   }
@@ -342,14 +757,16 @@ class WorldListener implements Listener
   */
 
   // cancel weird drops
-  public function onBlockBreak(BlockBreakEvent $event)
+  public function onBlockBreak(BlockBreakEvent $event): void
   {
     $id = $event->getBlock()->getTypeId();
     if ($id == BlockTypeIds::TALL_GRASS
       || $id == BlockTypeIds::DOUBLE_TALLGRASS
       || $id == BlockTypeIds::SUNFLOWER
       || $id == BlockTypeIds::COBWEB
-      || $id == BlockTypeIds::LARGE_FERN) {
+      || $id == BlockTypeIds::LARGE_FERN
+      || $id == BlockTypeIds::CAMPFIRE
+    ) {
       $event->setDrops([]);
     }
   }
@@ -523,6 +940,11 @@ class WorldListener implements Listener
           $this->handleStartGamePacket($packet, $event, $key);
           break;
 
+        case TextPacket::NETWORK_ID:
+          /** @var TextPacket $packet */
+          $this->handleTextPacket($packet, $event, $key);
+          break;
+
         /* deprecated, See CustomItemLoader
       case CreativeContentPacket::NETWORK_ID:
         $this->handleCreativeContentPacket($packet, $event, $key);
@@ -562,6 +984,15 @@ class WorldListener implements Listener
     }
 
     $event->setPackets($packets);
+  }
+
+  // On certain versions of the game, the client will instantly disconnect when given a text packet with no message on it.
+  private function handleTextPacket(TextPacket $packet, &$packets, $key): void
+  {
+    // Do we want the not isset check too? Will it ever be null?
+    if ($packet->message === "" || !isset($packet->message)) {
+      unset($packets[$key]);
+    }
   }
 
   // this is for ranked sky wars
@@ -679,7 +1110,7 @@ class WorldListener implements Listener
   {
     /** @var PlayerListPacket $packet */
     foreach ($packet->entries as $entry) {
-      $entry->xboxUserId = "";
+      $entry->xboxUserId = ""; // why do we do this?
     }
   }
 
@@ -972,7 +1403,12 @@ class WorldListener implements Listener
   }
   */
 
-  public function onQueryRegenerate(QueryRegenerateEvent $ev)
+  public function noTrampling(EntityTrampleFarmlandEvent $event): void
+  {
+    $event->cancel();
+  }
+
+  public function onQueryRegenerate(QueryRegenerateEvent $ev): void
   {
     if (!$this->core->getRegionInfo()->isHub()) return;
     $total = 0;

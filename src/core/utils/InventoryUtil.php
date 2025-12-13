@@ -9,8 +9,8 @@ use pocketmine\block\VanillaBlocks;
 use pocketmine\entity\effect\EffectInstance;
 use pocketmine\entity\effect\VanillaEffects;
 use pocketmine\inventory\Inventory;
+use pocketmine\item\enchantment\EnchantmentInstance;
 use pocketmine\item\Item;
-use pocketmine\item\ItemTypeIds;
 use pocketmine\item\PotionType;
 use pocketmine\item\VanillaItems;
 use pocketmine\player\GameMode;
@@ -47,7 +47,7 @@ class InventoryUtil
     $player->setHealth($player->getMaxHealth());
     $player->setAbsorption(0.0);
     $player->setAllowFlight(false);
-    $player->setGamemode(GameMode::ADVENTURE());
+    $player->setGamemode(GameMode::ADVENTURE);
     $player->setFlying(false);
     $player->setNoClientPredictions(false);
     $player->setInvisible(false);
@@ -76,6 +76,26 @@ class InventoryUtil
     $player->getArmorInventory()->setChestplate(VanillaItems::DIAMOND_CHESTPLATE()->setUnbreakable());
     $player->getArmorInventory()->setLeggings(VanillaItems::DIAMOND_LEGGINGS()->setUnbreakable());
     $player->getArmorInventory()->setBoots(VanillaItems::DIAMOND_BOOTS()->setUnbreakable());
+  }
+
+  /**
+   * @param Inventory $inventory
+   * @param EnchantmentInstance[] $enchants
+   * @return void
+   */
+  public static function enchantAllItems(Inventory $inventory, array $enchants): void
+  {
+    foreach ($inventory->getContents() as $slot => $item) {
+      if ($item->isNull()) {
+        continue;
+      }
+
+      foreach ($enchants as $enchant) {
+        $item->addEnchantment($enchant);
+      }
+
+      $inventory->setItem($slot, $item);
+    }
   }
 
   // give the player unbreakable diamond sword
