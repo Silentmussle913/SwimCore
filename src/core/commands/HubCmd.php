@@ -27,34 +27,44 @@ class HubCmd extends Command
   public function execute(CommandSender $sender, string $commandLabel, array $args): bool
   {
     if ($sender instanceof SwimPlayer) {
-      $sh = $sender->getSceneHelper();
-
-      // party check
-      if ($sh->isInParty()) {
-        $party = $sh->getParty();
-        $party->removePlayerFromParty($sender);
-        $party->partyMessage(TextFormat::YELLOW . $sender->getNicks()->getNick() . TextFormat::GREEN . " Left the Party");
-        $sender->sendMessage(TextFormat::YELLOW . "Hubbing made you leave your party, if you were the only player in the party it is now disbanded");
-      }
-
-      // event check
-      $event = $sh->getEvent();
-      if ($event) {
-        $sender->sendMessage(TextFormat::YELLOW . "Hubbing made you leave the event!");
-        $event->removePlayer($sender);
-        $event->removeMessage($sender);
-      }
-
-      // trolled
-      if ($sender->getCombatLogger()->isInCombat()) {
-        $sender->sendMessage(TextFormat::RED . "Hubbing while in combat is for pussies!");
-        return false;
-      }
-
-      // set the scene to Hub
-      $sh->setNewScene('Hub');
-      $sender->sendMessage("§7Teleporting to hub...");
+      return self::goHub($sender);
     }
+
+    return true;
+  }
+
+  /**
+   * @throws ScoreFactoryException
+   */
+  public static function goHub(SwimPlayer $player, bool $careAboutCombatCheck = true): bool
+  {
+    $sh = $player->getSceneHelper();
+
+    // trolled
+    if ($careAboutCombatCheck && $player->getCombatLogger()->isInCombat()) {
+      $player->sendMessage(TextFormat::RED . "Hubbing while in combat is for pussies!");
+      return false;
+    }
+
+    // party check
+    if ($sh->isInParty()) {
+      $party = $sh->getParty();
+      $party->removePlayerFromParty($player);
+      $party->partyMessage(TextFormat::YELLOW . $player->getNicks()->getNick() . TextFormat::GREEN . " Left the Party");
+      $player->sendMessage(TextFormat::YELLOW . "Hubbing made you leave your party, if you were the only player in the party it is now disbanded");
+    }
+
+    // event check
+    $event = $sh->getEvent();
+    if ($event) {
+      $player->sendMessage(TextFormat::YELLOW . "Hubbing made you leave the event!");
+      $event->removePlayer($player);
+      $event->removeMessage($player);
+    }
+
+    // set the scene to Hub
+    $sh->setNewScene('Hub');
+    $player->sendMessage("§7Teleporting to hub...");
 
     return true;
   }

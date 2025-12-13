@@ -23,15 +23,6 @@ use pocketmine\world\World;
 class BlocksManager
 {
 
-  // Old array of array version
-  // int vectorHash => [self::BLOCK => Block $block, int self::TIME => $time, Vector3 self::POSITION => $vec]
-
-  /* Deprecated key const look up values for the old array structure
-    public const TIME = 0;
-    public const BLOCK = 1;
-    public const POSITION = 2;
-  */
-
   /**
    * @var BlockEntry[]
    * @brief key is an int of a vector3 hash
@@ -188,7 +179,7 @@ class BlocksManager
    */
   private function isHashKeyInArray(Vector3 $vector, array $array): bool
   {
-    return isset($array[PositionHelper::getVectorHashKey($vector)]);
+    return isset($array[PositionHelper::getVectorEncodedKey($vector)]);
   }
 
   /**
@@ -198,7 +189,10 @@ class BlocksManager
    */
   public function addBlockEntryToArrayWithVector3Key(array &$array, BlockEntry $entry): void
   {
-    $key = PositionHelper::getVectorHashKey($entry->position);
+    // ALWAYS key by block grid position, never a centered vector
+    $entry->position = PositionHelper::toBlockVector($entry->position);
+
+    $key = PositionHelper::getVectorEncodedKey($entry->position);
     $entry->key = $key;
     $array[$key] = $entry;
 
@@ -218,7 +212,8 @@ class BlocksManager
     $time = $this->core->getServer()->getTick() + $this->placedLifeTime;
     if ($this->canPlaceBlocks) {
       foreach ($event->getTransaction()->getBlocks() as [$x, $y, $z, $block]) {
-        $vec = new Vector3($x, $y, $z);
+        // Transaction coords are already block coords, but normalize anyway
+        $vec = PositionHelper::toBlockVector(new Vector3($x, $y, $z));
         $entry = new BlockEntry($vec, $block, $time);
         $this->addBlockEntryToArrayWithVector3Key($this->placedBlocks, $entry);
         $entry->ownerEntity = $id;
@@ -244,7 +239,7 @@ class BlocksManager
     }
 
     // get the block
-    $position = $block->getPosition();
+    $position = PositionHelper::toBlockVector($block->getPosition());
     $time = $this->server->getTick() + $this->brokenLifeTime;
 
     // get if the block we broke is a player placed block
@@ -288,7 +283,7 @@ class BlocksManager
   {
     $time = $this->server->getTick() + $this->placedLifeTime;
     $block = $event->getBlock();
-    $position = $block->getPosition();
+    $position = PositionHelper::toBlockVector($block->getPosition());
     $entry = new BlockEntry($position, $block, $time);
     $this->addBlockEntryToArrayWithVector3Key($this->placedBlocks, $entry);
   }
@@ -300,7 +295,7 @@ class BlocksManager
     $blockClicked = $event->getBlockClicked();
 
     // Calculate the position offset by 1 in the correct axis determined by the block face
-    $position = $blockClicked->getSide($blockFace)->getPosition();
+    $position = PositionHelper::toBlockVector($blockClicked->getSide($blockFace)->getPosition());
 
     // Determine the type of block (water or lava) being placed
     // $block = $event->getItem()->getTypeId() == ItemTypeIds::WATER_BUCKET ? VanillaBlocks::WATER() : VanillaBlocks::LAVA();
@@ -314,7 +309,8 @@ class BlocksManager
 
   private function isInPlacedBlocks(Vector3 $vector3): bool
   {
-    return $this->isHashKeyInArray($vector3, $this->placedBlocks);
+    $blockVec = PositionHelper::toBlockVector($vector3);
+    return $this->isHashKeyInArray($blockVec, $this->placedBlocks);
   }
 
   // sets all placed blocks back to air
@@ -440,8 +436,11 @@ class BlocksManager
   {
     $time = $this->server->getTick();
     foreach ($positions as $pos) {
-      // if ($this->world->isInLoadedTerrain($pos))
-      if ($this->world->isInWorld($pos->x, $pos->y, $pos->z)) {
+      $pos = PositionHelper::toBlockVector($pos);
+      $x = (int)$pos->x;
+      $y = (int)$pos->y;
+      $z = (int)$pos->z;
+      if ($this->world->isInWorld($x, $y, $z)) {
         $this->world->setBlock($pos, $block);
         $entry = new BlockEntry($pos, $block, $time);
         $this->addBlockEntryToArrayWithVector3Key($this->placedBlocks, $entry);
@@ -453,25 +452,31 @@ class BlocksManager
   public function removeBlocks(array $positions): void
   {
     foreach ($positions as $pos) {
-      // if ($this->world->isInLoadedTerrain($pos))
-      if ($this->world->isInWorld($pos->x, $pos->y, $pos->z)) {
+      $pos = PositionHelper::toBlockVector($pos);
+      $x = (int)$pos->x;
+      $y = (int)$pos->y;
+      $z = (int)$pos->z;
+      if ($this->world->isInWorld($x, $y, $z)) {
         $block = $this->world->getBlock($pos);
-        $this->handleBlockBreakOnBlock($block); // we just call this for logging purposes (this might not even be correct though)
+        $this->handleBlockBreakOnBlock($block); // for logging updates internally hence the simulation
         $this->world->setBlock($pos, VanillaBlocks::AIR());
       }
     }
   }
 
-  // set blocks to air and by default removes any existing blocks at the positions from the placed blocks array
+  // set blocks to air and by default removes any existing blocks at the positions from the placed blocks array, without simulation
   public function removeBlocksFast(array $positions, bool $removeFromPlacedBlocksArray = true): void
   {
     foreach ($positions as $pos) {
-      // if ($this->world->isInLoadedTerrain($pos))
-      if ($this->world->isInWorld($pos->x, $pos->y, $pos->z)) {
+      $pos = PositionHelper::toBlockVector($pos);
+      $x = (int)$pos->x;
+      $y = (int)$pos->y;
+      $z = (int)$pos->z;
+      if ($this->world->isInWorld($x, $y, $z)) {
         // Remove from the placed blocks array since it is now air
         if ($removeFromPlacedBlocksArray && $this->isInPlacedBlocks($pos)) {
           if (SwimCore::$DEBUG) echo("BlocksManager::removeBlocksFast() | Removing placed blocks from blocks array\n");
-          unset($this->placedBlocks[PositionHelper::getVectorHashKey($pos)]);
+          unset($this->placedBlocks[PositionHelper::getVectorEncodedKey($pos)]);
         }
         $this->world->setBlock($pos, VanillaBlocks::AIR());
       }
@@ -527,6 +532,7 @@ class BlocksManager
   // add a chunk loader to the world, if a loader already exists at this position, it is removed and freed, and then replaced
   public function addChunkLoader(Vector3 $position, bool $tick = false): void
   {
+    $position = PositionHelper::toBlockVector($position);
     $key = $this->removeChunkLoader($position);
     $ticker = new BlockTicker($this->world, $position, $tick);
     $ticker->enableChunkTicker($tick);
@@ -540,7 +546,8 @@ class BlocksManager
   // this also frees the chunk loader from the world
   public function removeChunkLoader(Vector3 $position): int
   {
-    $key = PositionHelper::getVectorHashKey($position);
+    $position = PositionHelper::toBlockVector($position);
+    $key = PositionHelper::getVectorEncodedKey($position);
     if (self::isHashKeyInArray($position, $this->chunksToKeepAlive)) {
       $this->chunksToKeepAlive[$key]->free();
       unset($this->chunksToKeepAlive[$key]);
@@ -581,7 +588,7 @@ class BlocksManager
     foreach ($arr as $data) {
       $pos = PositionHelper::toString($data->position);
       echo("block entry# $data->key: ($pos) ({$data->block->getName()})\n");
-      $remadeKey = PositionHelper::getVectorHashKey($data->position);
+      $remadeKey = PositionHelper::getVectorEncodedKey($data->position);
       if ($remadeKey != $data->key) {
         echo("$data->key and $remadeKey do not match!\n");
       }

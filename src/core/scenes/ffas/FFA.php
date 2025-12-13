@@ -2,6 +2,7 @@
 
 namespace core\scenes\ffas;
 
+use core\commands\HubCmd;
 use core\scenes\PvP;
 use core\systems\player\SwimPlayer;
 use core\systems\scene\FFAInfo;
@@ -10,7 +11,13 @@ use core\utils\InventoryUtil;
 use core\utils\TimeHelper;
 use jackmd\scorefactory\ScoreFactory;
 use jackmd\scorefactory\ScoreFactoryException;
+use pocketmine\block\utils\DyeColor;
+use pocketmine\event\entity\EntityDamageByChildEntityEvent;
 use pocketmine\event\entity\EntityDamageByEntityEvent;
+use pocketmine\event\player\PlayerItemUseEvent;
+use pocketmine\item\Dye;
+use pocketmine\item\ItemTypeIds;
+use pocketmine\item\VanillaItems;
 use pocketmine\network\mcpe\protocol\types\entity\EntityIds;
 use pocketmine\player\GameMode;
 use pocketmine\scheduler\ClosureTask;
@@ -33,7 +40,7 @@ abstract class FFA extends PvP
   protected int $z;
   protected int $spawnOffset;
 
-  protected bool $interruptAllowed = true;
+  public bool $interruptAllowed = true;
   protected bool $respawnInArena = false; // by default warps back to hub, if true then warps back to arena
 
   // all FFA scenes autoload and are persistent
@@ -61,7 +68,8 @@ abstract class FFA extends PvP
     $player->teleport($pos);
   }
 
-  public function cleanUpItemEntities(int $seconds): void {
+  public function cleanUpItemEntities(int $seconds): void
+  {
     // Kill all dropped item entities in the world that have been on the ground longer than N seconds
     foreach ($this->world->getEntities() as $entity) {
       if ($entity::getNetworkTypeId() === EntityIds::ITEM) {
@@ -113,6 +121,26 @@ abstract class FFA extends PvP
     }
   }
 
+  public function sceneEntityDamageByChildEntityEvent(EntityDamageByChildEntityEvent $event, SwimPlayer $swimPlayer): void
+  {
+    $player = $event->getEntity();
+    if ($player instanceof SwimPlayer) {
+      $attacker = $event->getChild()->getOwningEntity();
+      if ($attacker instanceof SwimPlayer) {
+        // combat logger is used for this to prevent 3rd partying
+        $canAttack = $attacker->getCombatLogger()?->handleAttack($swimPlayer); // called anyway for the sake of logging
+        if (!$this->interruptAllowed) {
+          if (!$canAttack) {
+            $event->cancel();
+            return;
+          }
+        }
+      }
+    }
+
+    parent::sceneEntityDamageByChildEntityEvent($event, $swimPlayer);
+  }
+
   /*
    * Explode controls if an explosion animation effects happens or not
    * UseTeamColorForKillStreak controls if it uses the attackers team color or rank color for if they have a kill streak message to be sent in the scene
@@ -136,7 +164,7 @@ abstract class FFA extends PvP
 
     // reset the victim inventory and set them to spec
     InventoryUtil::fullPlayerReset($victim);
-    $victim->setGamemode(GameMode::SPECTATOR());
+    $victim->setGamemode(GameMode::SPECTATOR);
     $victim->getAttributes()->setAttribute("kill streak", 0); // reset kill streak
 
     // kill effect
@@ -161,6 +189,53 @@ abstract class FFA extends PvP
     }
 
     $victim->getCombatLogger()?->setLastHitBy(null); // clear the attacker to remove the spawn tag
+  }
+
+  protected function regularSpectatorKit(SwimPlayer $swimPlayer): void
+  {
+    // Fresh spectator with respawn and leave control items
+    InventoryUtil::fullPlayerReset($swimPlayer);
+    $swimPlayer->setGamemode(GameMode::SPECTATOR);
+    // 1 second wait time to get items
+    $this->core->getScheduler()->scheduleDelayedTask(new ClosureTask(function () use ($swimPlayer) {
+      // Must be online and a spectator in the scene to be given these items
+      if (!$swimPlayer->isConnected()) {
+        return;
+      }
+      if (!$swimPlayer->isSpectator()) {
+        return;
+      }
+      if (!$this->isInScene($swimPlayer)) {
+        return;
+      }
+      $inv = $swimPlayer->getInventory();
+      $inv->addItem(VanillaItems::DYE()->setColor(DyeColor::LIME)
+        ->setCustomName(TextFormat::RESET . TextFormat::GREEN . "Respawn"));
+      $inv->addItem(VanillaItems::DYE()->setColor(DyeColor::RED)
+        ->setCustomName(TextFormat::RESET . TextFormat::RED . "Leave to Hub"));
+    }), TimeHelper::secondsToTicks(1));
+  }
+
+  /**
+   * @throws ScoreFactoryException
+   */
+  protected function regularSpectatorControls(PlayerItemUseEvent $event, SwimPlayer $swimPlayer): void
+  {
+    if ($swimPlayer->isSpectator()) {
+      $item = $event->getItem();
+      $id = $item->getTypeId();
+      if ($id != ItemTypeIds::DYE) {
+        return;
+      }
+      if (!($item instanceof Dye)) {
+        return;
+      }
+      if ($item->getColor() == DyeColor::LIME) {
+        $this->playerAdded($swimPlayer); // Call the code that happens when a player is added to the scene for the first time, often respawn logic.
+      } else if ($item->getColor() == DyeColor::RED) {
+        HubCmd::goHub($swimPlayer, false);
+      }
+    }
   }
 
   protected function ffaNameTag(SwimPlayer $player): void
@@ -189,27 +264,30 @@ abstract class FFA extends PvP
   {
     if ($player->isScoreboardEnabled()) {
       try {
-        $player->refreshScoreboard(TextFormat::AQUA . "Swimgg.club");
-        $p = $player;
-        ScoreFactory::sendObjective($p);
+        $player->refreshScoreboard("§bswimgg.§3club");
+        ScoreFactory::sendObjective($player);
 
         // variables needed
-        $onlineCount = count($p->getWorld()->getPlayers()); // might want to replace this with get scene count for nodebuff ffa
+        $lines = 0;
+        $onlineCount = $this->getPlayerCount();
         $ping = $player->getNslHandler()->getPing();
-        $coolDown = $player->getCombatLogger()->getCombatCoolDown();
         $kills = strval($player->getAttributes()->getAttribute("kill streak") ?? 0);
 
         // define lines
-        ScoreFactory::setScoreLine($p, 1, " §bFFA: §3" . $onlineCount . " Players");
-        ScoreFactory::setScoreLine($p, 2, " §bPing: §3" . $ping);
-        ScoreFactory::setScoreLine($p, 3, " §bKill Streak: §3" . $kills);
+        ScoreFactory::setScoreLine($player, ++$lines, " §bPlayers: §3" . $onlineCount);
+        ScoreFactory::setScoreLine($player, ++$lines, " §bPing: §3" . $ping);
+        ScoreFactory::setScoreLine($player, ++$lines, " §bKill Streak: §3" . $kills);
+        ScoreFactory::setScoreLine($player, ++$lines, " §bswimgg.§3club");
 
+        /*
         if (!$this->interruptAllowed) {
-          ScoreFactory::setScoreLine($p, 4, " §bCombat: §3" . $coolDown);
+          $coolDown = $player->getCombatLogger()->getCombatCoolDown();
+          ScoreFactory::setScoreLine($p, 5, " §bCombat: §3" . $coolDown);
         }
+        */
 
         // send lines
-        ScoreFactory::sendLines($p);
+        ScoreFactory::sendLines($player);
       } catch (ScoreFactoryException $e) {
         Server::getInstance()->getLogger()->info($e->getMessage());
       }

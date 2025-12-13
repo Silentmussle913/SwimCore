@@ -31,6 +31,7 @@ class Nodebuff extends Duel
       BehaviorEventEnum::BLOCK_BREAK_EVENT,
       BehaviorEventEnum::BLOCK_PLACE_EVENT
     ]);
+    $this->spawnCloser = true;
   }
 
   // pearl cool down mechanics
@@ -64,7 +65,7 @@ class Nodebuff extends Duel
     // Check if it's a team win or a 1v1 duel
     if ($winners->getTeamSize() > 1) {
       // Handle a team victory
-      $this->partyWin($winners->getTeamName());
+      $this->partyWin($winners, $losers, "Nodebuff");
     } else {
       // 1v1 duel scenario: assume there's only one loser
       // 3/29 rare crash fix attempt
@@ -103,24 +104,6 @@ class Nodebuff extends Duel
         $this->specMessage();
       }
     }
-  }
-
-  private function partyWin(string $winnerTeamName): void
-  {
-    $nodebuff = TextFormat::GRAY . "(" . TextFormat::AQUA . "Nodebuff" . TextFormat::GRAY . ")" . TextFormat::RESET . " ";
-
-    $loserTeamsArray = [];
-    foreach ($this->teamManager->getTeams() as $team) {
-      if (!$team->isSpecTeam() && $team->getTeamSize() == 0) {
-        $loserTeamsArray[] = $team->getTeamName();
-      }
-    }
-    $loserTeams = implode(', ', $loserTeamsArray);
-
-    $msg = $nodebuff . TextFormat::YELLOW . $winnerTeamName . TextFormat::GREEN . " Defeated " . TextFormat::YELLOW . $loserTeams;
-    $this->core->getSystemManager()->getSceneSystem()->getScene("Hub")?->sceneAnnouncement($msg);
-    $this->sceneAnnouncement($msg);
-    $this->specMessage();
   }
 
 }

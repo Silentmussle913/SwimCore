@@ -73,12 +73,12 @@ class EventSystem extends System
 
   public function init(): void
   {
-    // TODO: Implement init() method.
+
   }
 
   public function updateTick(): void
   {
-    // TODO: Implement updateTick() method.
+
   }
 
   /**
@@ -142,7 +142,7 @@ class EventSystem extends System
   // below here are functions to create and register server events into this system
 
   /**
-   * @throws ScoreFactoryException|JsonException
+   * @throws ScoreFactoryException
    */
   public function registerEvent(SwimPlayer $swimPlayerHost, ServerGameEvent $event): void
   {

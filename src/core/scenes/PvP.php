@@ -21,7 +21,9 @@ use pocketmine\event\entity\EntityItemPickupEvent;
 use pocketmine\event\entity\EntityRegainHealthEvent;
 use pocketmine\event\entity\EntitySpawnEvent;
 use pocketmine\event\entity\ProjectileLaunchEvent;
+use pocketmine\math\Vector3;
 use pocketmine\network\mcpe\protocol\types\entity\EntityIds;
+use pocketmine\player\GameMode;
 use pocketmine\utils\TextFormat;
 
 // this is a middle man class for doing common pvp mechanics a duel or FFA scene might need
@@ -30,23 +32,28 @@ abstract class PvP extends Scene
 {
 
   public bool $disableVelocityChecks = false;
-  public float $vertKB;
-  public float $kb;
-  public float $controllerVertKB;
-  public float $controllerKB;
-  public int $hitCoolDown; // in ticks
-  public float $pearlKB;
-  public float $snowballKB;
-  public float $rodKB;
-  public float $arrowKB;
-  public float $pearlSpeed;
-  public float $pearlGravity;
+  public float $vertKB = 0.4;
+  public float $kb = 0.4;
+  public float $controllerVertKB = 0.4;
+  public float $controllerKB = 0.4;
+  public int $hitCoolDown = 10; // in ticks
+  public float $pearlKB = 0.6;
+  public float $snowballKB = 0.5;
+  public float $rodKB = 0.41;
+  public float $arrowKB = 0.5;
+  public float $pearlSpeed = 2.5;
+  public float $pearlGravity = 0.1;
 
-  public bool $naturalRegen;
-  public bool $fallDamage;
-  protected bool $voidDamage;
+  // These 2 are more custom duel/playground specific
+  public bool $reKitOnKill = true;
+  public bool $healOnKill = true;
+
+  public bool $naturalRegen = true;
+  public bool $fallDamage = true;
+  protected bool $voidDamage = false;
 
   public bool $tntBreaksBlocks = false;
+  public float $blastKB = 1.5;
   public bool $canThrowTnt = true;
   public float $tntRadius = 3.5;
   public int $tntFuse = 40;
@@ -67,7 +74,7 @@ abstract class PvP extends Scene
     $this->hitCoolDown = 10;
     $this->pearlKB = 0.6;
     $this->snowballKB = 0.5;
-    $this->rodKB = 0.35;
+    $this->rodKB = 0.41;
     $this->arrowKB = 0.5;
     $this->pearlSpeed = 2.5;
     $this->pearlGravity = 0.1;
@@ -182,8 +189,8 @@ abstract class PvP extends Scene
           $event->setKnockBack($this->rodKB);
         }
 
-        // this allows projectile combos by turning cool down to 1 tick
-        $event->setAttackCooldown(1);
+        // this allows projectile combo stacking by turning cool down to 0 tick
+        $event->setAttackCooldown(0);
 
         // scripted event callback derived scenes can override
         $this->hitByProjectile($swimPlayer, $attacker, $child, $event);
@@ -259,6 +266,18 @@ abstract class PvP extends Scene
     if ($origin::getNetworkTypeId() == EntityIds::ITEM) {
       /** @var $origin ItemEntity */
       $this->droppedItemManager->removeDroppedItem($origin);
+    }
+  }
+
+  protected function stayCloseSpec(SwimPlayer $player, Vector3 $mapCenter, float $distance = 50): void
+  {
+    if ($player->getGamemode() == GameMode::SPECTATOR) {
+      if ($player->getPosition()->distance($mapCenter) >= $distance) {
+        $player->teleport($mapCenter);
+        if (SwimCore::$DEBUG) {
+          echo("PvP::stayCloseSpec({$player->getName()}) called\n");
+        }
+      }
     }
   }
 

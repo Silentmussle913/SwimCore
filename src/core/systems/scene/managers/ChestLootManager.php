@@ -61,7 +61,7 @@ class ChestLootManager
    */
   public function openAndLootChestWithLog(ChestTile $chestTile): ?ChestInventory
   {
-    $key = PositionHelper::getVectorHashKey($chestTile->getPosition());
+    $key = PositionHelper::getVectorEncodedKey($chestTile->getPosition());
     if (!isset($this->fixedChests[$key])) {
       $this->fixedChests[$key] = $chestTile;
       $this->lootedChests[$key] = $chestTile;
@@ -74,19 +74,19 @@ class ChestLootManager
 
   public function logLooted(ChestTile $chestTile): void
   {
-    $key = PositionHelper::getVectorHashKey($chestTile->getPosition());
+    $key = PositionHelper::getVectorEncodedKey($chestTile->getPosition());
     $this->lootedChests[$key] = $chestTile;
   }
 
   public function isFixed(Position $position): bool
   {
-    $key = PositionHelper::getVectorHashKey($position);
+    $key = PositionHelper::getVectorEncodedKey($position);
     return isset($this->fixedChests[$key]);
   }
 
   public function isLooted(Position $position): bool
   {
-    $key = PositionHelper::getVectorHashKey($position);
+    $key = PositionHelper::getVectorEncodedKey($position);
     return isset($this->lootedChests[$key]);
   }
 

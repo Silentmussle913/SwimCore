@@ -3,6 +3,7 @@
 namespace core\systems\scene\misc;
 
 use Exception;
+use pocketmine\item\Durable;
 use pocketmine\item\Item;
 
 abstract class LootTable
@@ -13,6 +14,8 @@ abstract class LootTable
   public const Movement = 2;
   public const Healing = 3;
   public const Misc = 4;
+
+  public bool $unbreakable = false;
 
   protected array $items = [
     self::Weapon => [],
@@ -109,6 +112,9 @@ abstract class LootTable
   public function registerItem(int $category, Item $item): void
   {
     if (isset($this->items[$category])) {
+      if ($this->unbreakable && $item instanceof Durable) {
+        $item->setUnbreakable();
+      }
       $this->items[$category][] = $item;
     }
   }

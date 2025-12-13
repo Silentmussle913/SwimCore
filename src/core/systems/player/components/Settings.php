@@ -91,6 +91,7 @@ class Settings extends Component
 
   public function refreshFullBright(): void
   {
+    $this->swimPlayer->getNetworkSession()->sendDataPacket(SetTimePacket::create($this->getToggleInt('personalTime') + 2000000000));
     if ($this->getToggle('fullBright')) {
       $this->swimPlayer->getEffects()->add(new EffectInstance(VanillaEffects::NIGHT_VISION(), TimeHelper::minutesToTicks(900), 1, false));
     } else {
