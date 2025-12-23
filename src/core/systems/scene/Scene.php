@@ -78,7 +78,7 @@ abstract class Scene
 
   private int $playerCount = 0;
 
-  protected World $world;
+  protected ?World $world = null;
 
   protected bool $canCraft = false;
 
