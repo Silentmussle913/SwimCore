@@ -16,7 +16,22 @@ use pocketmine\world\sound\IgniteSound;
 class KnockerBox extends BaseBox
 {
 
-  public function place(BlockTransaction $tx, Item $item, Block $blockReplace, Block $blockClicked, int $face, Vector3 $clickVector, ?Player $player = null): bool
+  public function __construct()
+  {
+    parent::__construct();
+    $this->setWorksUnderwater(true); // client hack to make the tnt use underwater tnt textures
+  }
+
+  public function place
+  (
+    BlockTransaction $tx,
+    Item             $item,
+    Block            $blockReplace,
+    Block            $blockClicked,
+    int              $face,
+    Vector3          $clickVector,
+    ?Player          $player = null
+  ): bool
   {
     if ($player instanceof SwimPlayer) {
 
@@ -28,6 +43,7 @@ class KnockerBox extends BaseBox
 
       $pos = $blockReplace->getPosition();
       $primedTnt = new KnockerBoxEntity(Location::fromObject($pos->add(0.5, 0, 0.5), $pos->getWorld()), $player);
+      $primedTnt->setWorksUnderwater(true);
       $mot = (new Random())->nextSignedFloat() * M_PI * 2;
       $primedTnt->setMotion(new Vector3(-sin($mot) * 0.02, 0.2, -cos($mot) * 0.02));
       $primedTnt->setFuse(15);

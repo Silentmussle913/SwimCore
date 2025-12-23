@@ -178,13 +178,20 @@ class Party
   private function determineMaxPartySize(): void
   {
     $rankLevel = $this->leader->getRank()->getRankLevel();
+    $this->maxPartySize = self::getMaxPartySizeBasedOnRankLevel($rankLevel);
+  }
+
+  public static function getMaxPartySizeBasedOnRankLevel(int $rankLevel): int
+  {
     if ($rankLevel == Rank::DEFAULT_RANK) {
-      $this->maxPartySize = 4;
-    } else if ($rankLevel >= Rank::BOOSTER_RANK && $rankLevel <= Rank::FAMOUS_RANK) {
-      $this->maxPartySize = 8;
+      return 4;
+    } else if ($rankLevel >= Rank::BOOSTER_RANK && $rankLevel <= Rank::VIP) {
+      return 8;
+    } else if ($rankLevel >= Rank::MEDIA_RANK && $rankLevel <= Rank::BUILDER_RANK) {
+      return 16;
     } else {
       // $this->maxPartySize = $this->core->getServer()->getMaxPlayers(); // might want to limit this depending on how abused it gets
-      $this->maxPartySize = 99;
+      return 99;
     }
   }
 
@@ -419,8 +426,25 @@ class Party
     }
   }
 
-  public function sendJoinRequest(SwimPlayer $player): void
+  public function sendJoinRequest(SwimPlayer $player, bool $autoJoinIfAlreadyInvitedAndAbleTo = false): void
   {
+    if ($autoJoinIfAlreadyInvitedAndAbleTo) {
+      /** @var Party[] $invites */
+      $invites = $player->getInvites()?->getPartyInvites();
+      if (!empty($invites)) {
+        if ($player->isConnected() && !$this->isInDuel() && !$player->getSceneHelper()?->isInParty() && $player->isInScene("Hub")) {
+          foreach ($invites as $invite) {
+            if ($invite === $this) {
+              $player->sendMessage(TextFormat::GREEN . "You joined the party: " . TextFormat::YELLOW . $this->partyName);
+              $this->addPlayerToParty($player);
+              $this->removeJoinRequest($player);
+              return;
+            }
+          }
+        }
+      }
+    }
+
     $id = $player->getId();
     if (!isset($this->joinRequests[$id])) {
       $this->joinRequests[$id] = $player;

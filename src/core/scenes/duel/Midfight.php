@@ -172,7 +172,7 @@ class Midfight extends Duel
   protected function duelOver(Team $winners, Team $losers): void
   {
     if ($winners->getTeamSize() > 1) {
-      $this->partyWin($winners->getTeamName());
+      $this->partyWin($winners, $losers, "Midfight");
     } else { // assumes that it was a 1v1 and the 1 loser in the losers array is who we just beat
       // 3/29 rare crash fix attempt
       $loser = !empty($this->losers) ? $this->losers[array_key_first($this->losers)] : null;
@@ -198,25 +198,6 @@ class Midfight extends Duel
         $this->specMessage();
       }
     }
-  }
-
-  // this logic seems wrong, needs to be rewritten anyway
-  private function partyWin(string $winnerTeamName): void
-  {
-    $midf = TextFormat::GRAY . "(" . TextFormat::AQUA . "Midfight Parties" . TextFormat::GRAY . ")" . TextFormat::RESET . " ";
-
-    $loserTeamsArray = [];
-    foreach ($this->teamManager->getTeams() as $team) {
-      if (!$team->isSpecTeam() && $team->getTeamSize() == 0) {
-        $loserTeamsArray[] = $team->getTeamName();
-      }
-    }
-    $loserTeams = implode(', ', $loserTeamsArray);
-
-    // $this->core->getServer()->broadcastMessage($midf . TextFormat::YELLOW . $winnerTeamName . TextFormat::GREEN . " Defeated " . TextFormat::YELLOW . $loserTeams);
-    $msg = $midf . TextFormat::YELLOW . $winnerTeamName . TextFormat::GREEN . " Defeated " . TextFormat::YELLOW . $loserTeams;
-    $this->core->getSystemManager()->getSceneSystem()->getScene("Hub")?->sceneAnnouncement($msg);
-    $this->specMessage();
   }
 
 }

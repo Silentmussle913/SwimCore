@@ -21,8 +21,8 @@ use core\utils\loaders\CustomItemLoader;
 use core\utils\raklib\RaklibSetup;
 use core\utils\raklib\SwimSkinAdapter;
 use core\utils\raklib\SwimTypeConverter;
-use core\utils\security\ParseIP;
 use core\utils\loaders\WorldLoader;
+use core\utils\security\ParseIP;
 use core\utils\VoidGenerator;
 use CortexPE\Commando\exception\HookAlreadyRegistered;
 use Exception;
@@ -51,6 +51,7 @@ class SwimCore extends PluginBase
 
   public static bool $AC = true;
   public static bool $DEBUG = false;
+  public static bool $SKINFORALL = true; // if true, the skin fixes we have for old versions apply to new version too
   public static bool $REPLAYER = false;
   public static bool $RANKED = true;
 
@@ -280,12 +281,16 @@ class SwimCore extends PluginBase
 
   public function onLoad(): void
   {
-    // set up asset and data folder
     $this->setDataAssetFolderPaths();
 
-    // register the void generator SwimCore has built in, and also make the flat world just generate as void too (hack)
-    GeneratorManager::getInstance()->addGenerator(VoidGenerator::class, "flat", fn() => null, true);
-    GeneratorManager::getInstance()->addGenerator(VoidGenerator::class, "void", fn() => null, true);
+    // we like the void
+    $gm = GeneratorManager::getInstance();
+    $gm->addGenerator(VoidGenerator::class, "void", fn(string $preset) => null, true, true);
+    $gm->addGenerator(VoidGenerator::class, "normal", fn(string $preset) => null, true, true);
+    $gm->addGenerator(VoidGenerator::class, "flat", fn(string $preset) => null, true, true);
+    $gm->addGenerator(VoidGenerator::class, "nether", fn(string $preset) => null, true, true);
+    $gm->addGenerator(VoidGenerator::class, "default", fn(string $preset) => null, true, true);
+    $gm->addGenerator(VoidGenerator::class, "hell", fn(string $preset) => null, true, true);
   }
 
   // close the connection to the database

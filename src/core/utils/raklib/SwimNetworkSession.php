@@ -342,9 +342,26 @@ class SwimNetworkSession extends NetworkSession
     $this->sendDataPacket(DisconnectPacket::create($reason, $translated, ""));
   }
 
+  /*
+    1.21.130 and above, all these overrides below are broken because players now need to have the real UUID
+    of the player who is broadcasting the skin packets to actually accept the skin, otherwise everyone is a Steve skin.
+    This is due to the player list having a contract on the client to only accept skins of players it knows exist in
+    that list to avoid memory leaks from excess skins being sent out.
+  */
+
+  /*
   public function onPlayerAdded(Player $p): void
   {
-    /** @var SwimPlayer $p */
+    /* // I guess we could do something like this? not worth it right now to try.
+    if (SwimCore::$isNetherGames) {
+      if ($this->getProtocolId() < ProtocolInfo::CURRENT_PROTOCOL) {
+        parent::onPlayerAdded($p);
+        return;
+      }
+    }
+    */
+    /*
+
     $bt = debug_backtrace(0, 2);
     if (isset($bt[1]["function"]) && $bt[1]["function"] === "addOnlinePlayer") {
       return;
@@ -360,10 +377,12 @@ class SwimNetworkSession extends NetworkSession
       $id, $p->getId(), $p->getDisplayName(), $this->getTypeConverter()->getSkinAdapter()->toSkinData($p->getSkin()), $p->getXuid())
     ]));
   }
+  */
 
   /**
    * @param SwimPlayer[] $players
    */
+  /*
   public function syncPlayerList(array $players): void
   {
     $this->sendDataPacket(PlayerListPacket::add(array_map(function (SwimPlayer $player): PlayerListEntry {
@@ -382,13 +401,15 @@ class SwimNetworkSession extends NetworkSession
       );
     }, $players)));
   }
+  */
 
+  /*
   public function onPlayerRemoved(Player $p): void
   {
-    /** @var SwimPlayer $p */
     if ($p !== $this->getPlayer()) {
       $this->sendDataPacket(PlayerListPacket::remove([PlayerListEntry::createRemovalEntry($p->getRandomUUID())]));
     }
   }
+  */
 
 }

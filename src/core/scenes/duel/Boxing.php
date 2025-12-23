@@ -31,6 +31,7 @@ class Boxing extends Duel
     ]);
     $this->kb = 0.404;
     $this->vertKB = 0.404;
+    $this->spawnCloser = true;
   }
 
   protected function applyKit(SwimPlayer $swimPlayer): void
@@ -88,7 +89,7 @@ class Boxing extends Duel
   protected function duelOver(Team $winners, Team $losers): void
   {
     if ($winners->getTeamSize() > 1) {
-      $this->partyWin($winners->getTeamName());
+      $this->partyWin($winners, $losers, "Boxing");
     } else { // assumes that it was a 1v1 and the 1 loser in the losers array is who we just beat
       // 3/29 rare crash fix attempt
       $loser = !empty($this->losers) ? $this->losers[array_key_first($this->losers)] : null;
@@ -97,11 +98,11 @@ class Boxing extends Duel
       if ($loser && $winner) {
         // get winner hits and loser hits
         $winnerHits = $winners->getScore();
-        $attackerString = TextFormat::GRAY . " (" . TextFormat::GREEN . $winnerHits . TextFormat::GRAY . " )";
-        $loserString = TextFormat::GRAY . " (" . TextFormat::GREEN . $losers->getScore() . TextFormat::GRAY . " )";
+        $attackerString = TextFormat::GRAY . " (" . TextFormat::GREEN . $winnerHits . TextFormat::GRAY . ")";
+        $loserString = TextFormat::GRAY . " (" . TextFormat::GREEN . $losers->getScore() . TextFormat::GRAY . ")";
 
         $attackerName = $winner->getNicks()->getNick();
-        $boxing = TextFormat::GRAY . "(" . TextFormat::AQUA . "Boxing" . TextFormat::GRAY . " )" . TextFormat::RESET . " ";
+        $boxing = TextFormat::GRAY . "(" . TextFormat::AQUA . "Boxing" . TextFormat::GRAY . ")" . TextFormat::RESET . " ";
         $msg = $boxing . TextFormat::GREEN . $attackerName . $attackerString . TextFormat::YELLOW
           . " Defeated " . TextFormat::RED . $loser->getNicks()->getNick() . $loserString;
 
@@ -113,25 +114,6 @@ class Boxing extends Duel
     }
   }
 
-  private function partyWin(string $winnerTeamName): void
-  {
-    $boxing = TextFormat::GRAY . "(" . TextFormat::AQUA . "Boxing Parties" . TextFormat::GRAY . " )" . TextFormat::RESET . " ";
-
-    $loserTeamsArray = [];
-    foreach ($this->teamManager->getTeams() as $team) {
-      if (!$team->isSpecTeam() && $team->getTeamSize() == 0) {
-        $loserTeamsArray[] = $team->getTeamName();
-      }
-    }
-    $loserTeams = implode(', ', $loserTeamsArray);
-
-    // $this->core->getServer()->broadcastMessage($boxing . TextFormat::YELLOW . $winnerTeamName . TextFormat::GREEN . " Defeated " . TextFormat::YELLOW . $loserTeams);
-    $msg = $boxing . TextFormat::YELLOW . $winnerTeamName . TextFormat::GREEN . " Defeated " . TextFormat::YELLOW . $loserTeams;
-    $this->core->getSystemManager()->getSceneSystem()->getScene("Hub")?->sceneAnnouncement($msg);
-    $this->sceneAnnouncement($msg);
-    $this->specMessage();
-  }
-
   /**
    * @throws ScoreFactoryException
    */
@@ -139,8 +121,7 @@ class Boxing extends Duel
   {
     if ($player->isScoreboardEnabled()) {
       try {
-        $this->startDuelScoreBoard($player);
-        $line = 2;
+        $line = $this->startDuelScoreBoard($player);
         // show all team scores
         foreach ($this->teamManager->getTeams() as $team) {
           if ($team->isSpecTeam()) continue;
@@ -152,7 +133,8 @@ class Boxing extends Duel
           ScoreFactory::setScoreLine($player, ++$line, " " . $teamString);
         }
         // submit
-        $this->submitScoreboardWithBottomFromLine($player);
+        ScoreFactory::setScoreLine($player, ++$line, " §bswimgg.§3club");
+        ScoreFactory::sendLines($player);
       } catch (ScoreFactoryException $e) {
         Server::getInstance()->getLogger()->info($e->getMessage());
       }
@@ -164,7 +146,7 @@ class Boxing extends Duel
   {
     if ($player->isScoreboardEnabled()) {
       try {
-        $player->refreshScoreboard(TextFormat::AQUA . "Swimgg.club");
+        $player->refreshScoreboard("§bswimgg.§3club");
 
         $team = $this->getPlayerTeam($player);
         if (!$team) return;
@@ -195,7 +177,7 @@ class Boxing extends Duel
         ScoreFactory::setScoreLine($player, 2, " §a" . $pHits . "§7 |§c " . $opHits . ($opHits > $pHits ? " §c(" : " §a(+") . $pHits - $opHits . ")");
         ScoreFactory::setScoreLine($player, 3, " §b" . $time);
 
-        $this->submitScoreboardWithBottomFromLine($player);
+        ScoreFactory::sendLines($player);
       } catch (ScoreFactoryException $e) {
         Server::getInstance()->getLogger()->info($e->getMessage());
       }

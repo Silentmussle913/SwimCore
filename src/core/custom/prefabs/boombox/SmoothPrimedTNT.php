@@ -6,6 +6,7 @@ use core\scenes\PvP;
 use core\systems\entity\entities\DeltaSupportTrait;
 use core\systems\player\SwimPlayer;
 use pocketmine\entity\Attribute;
+use pocketmine\entity\EntitySizeInfo;
 use pocketmine\entity\Location;
 use pocketmine\entity\object\PrimedTNT;
 use pocketmine\event\entity\EntityPreExplodeEvent;
@@ -18,6 +19,7 @@ use pocketmine\network\mcpe\protocol\types\entity\EntityMetadataCollection;
 use pocketmine\network\mcpe\protocol\types\entity\EntityMetadataProperties;
 use pocketmine\network\mcpe\protocol\types\entity\PropertySyncData;
 use pocketmine\player\Player;
+use pocketmine\utils\TextFormat;
 use pocketmine\world\Position;
 use function array_map;
 
@@ -51,6 +53,12 @@ class SmoothPrimedTNT extends PrimedTNT
     $this->setOwningEntity($owner);
     $this->blastRadius = $blastRadius;
     $this->breaksBlocks = $breakBlocks;
+    $this->setNameTagAlwaysVisible();
+  }
+
+  protected function getInitialSizeInfo(): EntitySizeInfo
+  {
+    return new EntitySizeInfo(0.8, 0.8, 0.5);
   }
 
   protected function sendSpawnPacket(Player $player): void
@@ -87,7 +95,6 @@ class SmoothPrimedTNT extends PrimedTNT
     $ev->call();
 
     if (!$ev->isCancelled()) {
-      //TODO: deal with underwater TNT (underwater TNT treats water as if it has a blast resistance of 0)
       $explosion = new CustomExplosion
       (
         Position::fromObject($this->location->add(0, $this->size->getHeight() / 2, 0), $this->getWorld()),
@@ -120,43 +127,11 @@ class SmoothPrimedTNT extends PrimedTNT
     parent::setFuse($fuse);
   }
 
-  /* this doesn't work for some reason
   public function onUpdate(int $currentTick): bool
   {
-    // Retrieve the remaining fuse time in ticks
-    $currentFuse = $this->getFuse(); // Assuming this returns remaining ticks
-
-    // Prevent division by zero
-    if ($this->maxFuse <= 0) {
-      $this->setNameTag(TextFormat::RED . "0.00");
-      return parent::onUpdate($currentTick);
-    }
-
-    // Convert remaining ticks to seconds with two decimal points
-    $remainingSeconds = $currentFuse / 20;
-    $formattedSeconds = number_format($remainingSeconds, 2);
-
-    // Determine the color based on remaining fuse time
-    if ($currentFuse > ($this->maxFuse / 2)) {
-      $color = TextFormat::GREEN;
-    } elseif ($currentFuse > ($this->maxFuse / 3)) {
-      $color = TextFormat::YELLOW;
-    } else {
-      $color = TextFormat::RED;
-    }
-
-    // Prevent negative time display just in case
-    if ($remainingSeconds < 0) {
-      $formattedSeconds = "0.00";
-      $color = TextFormat::RED;
-    }
-
-    // Set the name tag with color and remaining seconds
-    $this->setNameTag($color . $formattedSeconds . "s");
-
-    // Continue with the parent onUpdate method
+    $text = TextFormat::RED;
+    $this->setNameTag($text . round($this->getFuse() / 20, 1));
     return parent::onUpdate($currentTick);
   }
-  */
 
 }

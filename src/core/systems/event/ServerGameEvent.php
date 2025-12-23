@@ -78,6 +78,12 @@ abstract class ServerGameEvent
   // for id stuff
   private int $totalTeamsMade = 0;
 
+  public float $vKB = 0.4;
+  public float $hKB = 0.4;
+  public int $hearts = 10;
+  public bool $fallDamage = true;
+  public bool $regen = true;
+
   public function __construct
   (
     SwimCore    $core,
@@ -156,7 +162,7 @@ abstract class ServerGameEvent
   {
     // lifetime update + player count check
     $this->totalSeconds++;
-    if ($this->totalSeconds >= 60 * 5 || $this->getPlayerCount() == 0) {
+    if ($this->totalSeconds >= TimeHelper::minutesToSeconds(5) && $this->getPlayerCount() < $this->requiredPlayersToStart) {
       $this->eventMessage(TextFormat::RED . "Event took too long to start, ending early.");
       $this->end();
       return;
@@ -166,7 +172,7 @@ abstract class ServerGameEvent
     if ($this->getPlayerCount() >= $this->requiredPlayersToStart) {
       $this->seconds--;
     } else {
-      $this->seconds = 120; // restart back to 2 minutes to wait for more to join
+      $this->seconds = TimeHelper::minutesToSeconds(2); // restart back to 2 minutes to wait for more to join
     }
 
     // if we have announcements on then every 30 seconds announce in chat the event
@@ -184,7 +190,7 @@ abstract class ServerGameEvent
   }
 
   /**
-   * @throws ScoreFactoryException|JsonException
+   * @throws ScoreFactoryException
    * @breif Removes all players from the event and sends them back to hub
    */
   private function end(): void
@@ -204,8 +210,8 @@ abstract class ServerGameEvent
     if ($this->totalSeconds % 30 == 0) {
       $rank = $this->host->getRank();
 
-      $msg = $rank->rankString() . TextFormat::GREEN . " is Hosting " . TextFormat::LIGHT_PURPLE . $this->eventName . " " . $this->formatMap() . " " . $this->formatPlayerCount()
-        . TextFormat::GRAY . " | " . TimeHelper::digitalClockFormatter($this->seconds);
+      $msg = $rank->rankString() . TextFormat::GREEN . " is Hosting " . $this->eventName . " " . $this->formatMap() . " "
+        . $this->formatPlayerCount() . TextFormat::GRAY . " | " . TimeHelper::digitalClockFormatter($this->seconds);
 
       Server::getInstance()->broadcastMessage($msg);
     }

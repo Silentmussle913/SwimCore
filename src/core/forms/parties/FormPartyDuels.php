@@ -46,14 +46,6 @@ class FormPartyDuels
               $swimPlayer->sendMessage(TextFormat::YELLOW . "You need 8 players in your party to start a scrim!");
             }
             break;
-
-          case 2:
-            self::blockInPracticeForm($core, $swimPlayer, $party);
-            break;
-
-          case 3:
-            self::playgroundForm($core, $swimPlayer, $party);
-            break;
         }
       }
     });
@@ -191,54 +183,6 @@ class FormPartyDuels
     $form->setTitle(TextFormat::GREEN . "Select Duel Type");
     $form->addButton(TextFormat::GREEN . "Classic Duels", 0, Boxing::getIcon());
     // $form->addButton(TextFormat::DARK_AQUA . "Scrims Beta Test", 0, BedFight::getIcon());
-
-    $player->sendForm($form);
-  }
-
-  private static function blockInPracticeForm(SwimCore $core, SwimPlayer $player, Party $party): void
-  {
-    $form = new SimpleForm(function (SwimPlayer $player, $data) use ($core, $party) {
-      if ($data === null) {
-        return;
-      }
-
-      if (!$party->isInDuel()) {
-        if ($data == 0) { // clicked button 0 for yes
-          $party->startSelfDuel("blockin practice", 'random', false);
-        }
-      } else {
-        $player->sendMessage(TextFormat::RED . "Party no longer available to join practice");
-      }
-    });
-
-    $form->setTitle(TextFormat::DARK_GREEN . "Confirmation");
-    $form->setContent(TextFormat::YELLOW . "Join Block in Practice?");
-    $form->addButton(TextFormat::DARK_GREEN . "Yes");
-    $form->addButton(TextFormat::DARK_RED . "Nah");
-
-    $player->sendForm($form);
-  }
-
-  private static function playgroundForm(SwimCore $core, SwimPlayer $player, Party $party): void
-  {
-    $form = new SimpleForm(function (SwimPlayer $player, $data) use ($core, $party) {
-      if ($data === null) {
-        return;
-      }
-
-      if (!$party->isInDuel()) {
-        if ($data == 0) { // clicked button 0 for yes
-          $party->startSelfDuel("playground", 'random', false);
-        }
-      } else {
-        $player->sendMessage(TextFormat::RED . "Party no longer available to join practice");
-      }
-    });
-
-    $form->setTitle(TextFormat::DARK_GREEN . "Confirmation");
-    $form->setContent(TextFormat::YELLOW . "Join PvP Playground?");
-    $form->addButton(TextFormat::DARK_GREEN . "Yes");
-    $form->addButton(TextFormat::DARK_RED . "Nah");
 
     $player->sendForm($form);
   }

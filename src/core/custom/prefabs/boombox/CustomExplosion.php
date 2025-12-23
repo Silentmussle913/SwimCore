@@ -2,10 +2,11 @@
 
 namespace core\custom\prefabs\boombox;
 
-use core\scenes\duel\Duel;
+use core\scenes\ffas\FFA;
 use core\scenes\PvP;
 use core\SwimCore;
 use core\systems\player\SwimPlayer;
+use core\systems\scene\Scene;
 use pocketmine\block\Block;
 use pocketmine\block\TNT;
 use pocketmine\block\VanillaBlocks;
@@ -58,27 +59,35 @@ class CustomExplosion extends Explosion
       }
     }
 
-    // hit stuff nearby (players)
-    $this->blowUpEntities();
+    $blastKB = 1.5;
 
     // check if the owner is a player since we will be using them to get the scene of where this explosion is taking place
     // something to note is if they switch scenes between the block being placed and then the explosion, that could mess stuff up royally
     $owner = $this->what->getOwningEntity();
     if (!($owner instanceof SwimPlayer)) {
       if (SwimCore::$DEBUG) echo("Boom box owner is not a player!\n");
+      $this->blowUpEntities(true, null, $blastKB);
       return false;
     }
 
-    // must be in a duel scene to get the block manager
+    // get scene properties
     $scene = $owner->getSceneHelper()?->getScene() ?? null;
     if ($scene === null) {
       return false;
     }
 
     $breaksBlocks = true;
+    $interruptAllowed = true;
     if ($scene instanceof PvP) {
       $breaksBlocks = $scene->tntBreaksBlocks;
+      $blastKB = $scene->blastKB;
+      if ($scene instanceof FFA) {
+        $interruptAllowed = $scene->interruptAllowed;
+      }
     }
+
+    // hit stuff nearby (players)
+    $this->blowUpEntities($interruptAllowed, $owner, $blastKB);
 
     $air = VanillaItems::AIR();
     $airBlock = VanillaBlocks::AIR();
@@ -118,7 +127,7 @@ class CustomExplosion extends Explosion
     return true;
   }
 
-  private function blowUpEntities(): void
+  private function blowUpEntities(bool $interruptAllowed, ?SwimPlayer $owner, float $blastKB): void
   {
     $explosionSize = $this->radius * 2;
     $minX = (int)floor($this->source->x - $explosionSize - 1);
@@ -130,25 +139,44 @@ class CustomExplosion extends Explosion
 
     $explosionBB = new AxisAlignedBB($minX, $minY, $minZ, $maxX, $maxY, $maxZ);
 
+    $cb = $owner?->getCombatLogger() ?? null;
+
     // Entities to deal damage and knock back towards
     $list = $this->world->getNearbyEntities($explosionBB, $this->what instanceof Entity ? $this->what : null);
     foreach ($list as $entity) {
+      // Skip spectators
+      if ($entity instanceof SwimPlayer) {
+        if ($entity->isSpectator()) {
+          continue;
+        }
+      }
+
+      // First thing if we can't interrupt, and we have a combat logger from the owner, check if we are allowed to hit them.
+      // We can still get hit by our own tnt though, hence the entity !== owner check
+      if ((!$interruptAllowed) && $cb) {
+        if ($entity instanceof SwimPlayer) {
+          if (!$cb?->canAttack($entity) && $entity !== $owner) {
+            continue;
+          }
+        }
+      }
+
+      // Then do distance radius damage and knock back explosion math stuff for nearby entities
       $entityPos = $entity->getPosition();
       $distance = $entityPos->distance($this->source) / $explosionSize;
 
       if ($distance <= 1) {
         $motion = $entityPos->subtractVector($this->source);
         $motion->y = 0;
-
         $motion = $motion->normalize();
-
         $motion->y += 0.5;
-
         $impact = 1 - $distance;
-
         $damage = (int)((($impact * $impact + $impact) / 2) * 8 * $explosionSize + 1);
         $damage = (float)($damage / 3); // it was WAY too much damage
-        if (SwimCore::$DEBUG) echo("Dealing explosion damage to " . $entity->getNameTag() . " | Damage: " . $damage . " | Distance: " . $distance . "\n");
+
+        if (SwimCore::$DEBUG) {
+          echo("Dealing explosion damage to " . $entity->getNameTag() . " | Damage: " . $damage . " | Distance: " . $distance . "\n");
+        }
 
         if ($this->what instanceof Entity) {
           $ev = new EntityDamageByEntityEvent($this->what, $entity, EntityDamageEvent::CAUSE_ENTITY_EXPLOSION, $damage);
@@ -159,7 +187,7 @@ class CustomExplosion extends Explosion
         }
 
         $entity->attack($ev);
-        $entity->setMotion($entity->getMotion()->addVector($motion->multiply($impact * 1.5))); // TODO: maybe change kb here
+        $entity->setMotion($entity->getMotion()->addVector($motion->multiply($impact * $blastKB))); // TODO: maybe a way to change kb here
       }
     }
   }

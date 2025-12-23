@@ -42,6 +42,7 @@ class Queue extends Scene
   protected MapsData $mapsData;
   protected ?World $duelWorld;
   protected ?World $miscWorld; // bridge, bed fight, battle rush
+  protected ?World $scrimWorld;
 
   public static function AutoLoad(): bool
   {
@@ -68,6 +69,7 @@ class Queue extends Scene
     $worldManager = $this->core->getServer()->getWorldManager();
     $this->duelWorld = $worldManager->getWorldByName('duels');
     $this->miscWorld = $worldManager->getWorldByName('miscDuels');
+    $this->scrimWorld = $worldManager->getWorldByName('scrims');
 
     // spawn hub entities
     HubEntities::spawnToScene($this);
@@ -410,7 +412,7 @@ class Queue extends Scene
     }
 
     // warp in physically
-    $duel->warpPlayersIn();
+    $duel->warpPlayersIn($duel->shouldLookAt());
     if (SwimCore::$DEBUG) $duel->dumpDuel();
   }
 
@@ -442,7 +444,7 @@ class Queue extends Scene
 
     if ($swimPlayer->isScoreboardEnabled()) {
       try {
-        $swimPlayer->refreshScoreboard(TextFormat::AQUA . "Swimgg.club");
+        $swimPlayer->refreshScoreboard("§bswimgg.§3club");
         ScoreFactory::sendObjective($swimPlayer);
         // variables needed
         $onlineCount = count($swimPlayer->getServer()->getOnlinePlayers());

@@ -63,7 +63,8 @@ class Nicks extends Component
     $this->lastNickTick = $this->core->getServer()->getTick();
   }
 
-  public static function getRandomNick(): string {
+  public static function getRandomNick(): string
+  {
     $longestName = 12;
     do {
       $nameType = rand(1, 3);
@@ -83,7 +84,7 @@ class Nicks extends Component
     $upAll = rand(0, 4); // 1 in 5 chance of being upper case
     if ($upAll == 0) $name = strtoupper($name);
 
-    $shouldPrepend = rand(0, 3); // chance of prepending an 'x' or a 'z' or an 'its' or an 'itz' to look gamer style if we have a name that isn't too long
+    $shouldPrepend = rand(0, 3); // chance of prepending an 'x' or a 'z' or an 'its' or an 'itz'
     $len = strlen($name);
     if ($shouldPrepend == 0 && $len < $longestName) {
       $pre = rand(0, 1) ? "x" : "z";
@@ -111,19 +112,40 @@ class Nicks extends Component
     CordHook::sendEmbed($this->swimPlayer->getName() . " set nick to " . $this->nick, "Nick Alert");
   }
 
-  public function syncPlayerList() : void {
+  // Unfortunately we can not easily use random UUIDs anymore without stuff breaking due to 1.21.130 requirements. This isn't that big of a deal.
+  // For now, I don't care trying to use random UUIDs at all and will just have this use the real UUID.
+  public function syncPlayerList(): void
+  {
+    // Always use the real UUID. No random UUIDs anywhere.
+    $realUuid = $this->swimPlayer->getUniqueId();
+
+    // Broadcast to everyone else
     if ($this->swimPlayer->isConnected()) {
       $players = Server::getInstance()->getOnlinePlayers();
-      unset($players[$this->swimPlayer->getUniqueId()->getBytes()]);
+      unset($players[$realUuid->getBytes()]);
+
       $pk = PlayerListPacket::add([
-        PlayerListEntry::createAdditionEntry($this->swimPlayer->getRandomUUID(), $this->swimPlayer->getId(), $this->swimPlayer->getDisplayName(),
-          TypeConverter::getInstance()->getSkinAdapter()->toSkinData($this->swimPlayer->getSkin()), $this->swimPlayer->getXuid())
+        PlayerListEntry::createAdditionEntry(
+          $realUuid,
+          $this->swimPlayer->getId(),
+          $this->swimPlayer->getDisplayName(),
+          TypeConverter::getInstance()->getSkinAdapter()->toSkinData($this->swimPlayer->getSkin()),
+          $this->swimPlayer->getXuid()
+        )
       ]);
+
       NetworkBroadcastUtils::broadcastPackets($players, [$pk]);
     }
+
+    // Also update the player's own session (safe + keeps list consistent)
     $selfPk = PlayerListPacket::add([
-      PlayerListEntry::createAdditionEntry($this->swimPlayer->getUniqueId(), $this->swimPlayer->getId(), $this->swimPlayer->getDisplayName(),
-        TypeConverter::getInstance()->getSkinAdapter()->toSkinData($this->swimPlayer->getSkin()), $this->swimPlayer->getXuid())
+      PlayerListEntry::createAdditionEntry(
+        $realUuid,
+        $this->swimPlayer->getId(),
+        $this->swimPlayer->getDisplayName(),
+        TypeConverter::getInstance()->getSkinAdapter()->toSkinData($this->swimPlayer->getSkin()),
+        $this->swimPlayer->getXuid()
+      )
     ]);
     $this->swimPlayer->getNetworkSession()->sendDataPacket($selfPk);
   }

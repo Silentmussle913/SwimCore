@@ -3,11 +3,12 @@
 namespace core\systems\event;
 
 use core\systems\player\SwimPlayer;
+use jojoe77777\FormAPI\CustomForm;
 use jojoe77777\FormAPI\SimpleForm;
 use pocketmine\Server;
 use pocketmine\utils\TextFormat;
 
-class EventForms
+class FormEventManagement
 {
 
   public static function manageTeam(SwimPlayer $swimPlayer, ServerGameEvent $event, EventTeam $team): void
@@ -162,7 +163,6 @@ class EventForms
     $player->sendForm($form);
   }
 
-  // 3 buttons, 1 for adding player to blocked list, 1 for removing players from blocked list, 1 for kicking players (adds them to event blocked list too)
   public static function manageEventForm(SwimPlayer $swimPlayer, ServerGameEvent $event, EventTeam $team): void
   {
     $form = new SimpleForm(function (SwimPlayer $player, $data) use ($event, $team) {
@@ -170,21 +170,58 @@ class EventForms
 
       switch ($data) {
         case 0:
-          self::addPlayerToBlockedListForm($player, $event);
+          self::gameSettings($player, $event);
           break;
         case 1:
-          self::removePlayerFromBlockedListForm($player, $event);
+          self::addPlayerToBlockedListForm($player, $event);
           break;
         case 2:
+          self::removePlayerFromBlockedListForm($player, $event);
+          break;
+        case 3:
           self::kickPlayerForm($player, $event);
           break;
       }
     });
 
     $form->setTitle(TextFormat::LIGHT_PURPLE . "Manage Event");
+    $form->addButton(TextFormat::AQUA . "PvP Game Settings");
     $form->addButton(TextFormat::GREEN . "Add Player to Blocked List");
     $form->addButton(TextFormat::RED . "Remove Player from Blocked List");
     $form->addButton(TextFormat::GOLD . "Kick and Block Player");
+    $swimPlayer->sendForm($form);
+  }
+
+  private static function gameSettings(SwimPlayer $swimPlayer, ServerGameEvent $event): void
+  {
+    $maxHearts = $event->hearts;
+    $naturalRegen = $event->regen;
+    $fallDamage = $event->fallDamage;
+    $vKB = $event->vKB;
+    $hKB = $event->hKB;
+
+    $form = new CustomForm(function (SwimPlayer $player, $data) use ($event) {
+      if ($data === null || $event === null) return;
+
+      $var = -1;
+
+      $event->hearts = (int)$data[++$var];
+      $event->regen = (bool)$data[++$var];
+      $event->fallDamage = (bool)$data[++$var];
+      $event->vKB = (float)$data[++$var] / 100.0;
+      $event->hKB = (float)$data[++$var] / 100.0;
+
+      $player->sendMessage(TextFormat::GREEN . "Game Settings updated.");
+    });
+
+    $form->setTitle(TextFormat::AQUA . "PvP Game Settings");
+
+    $form->addSlider("Max Hearts", 1, 20, 1, $maxHearts);
+    $form->addToggle("Natural Regeneration", $naturalRegen);
+    $form->addToggle("Fall Damage Enabled", $fallDamage);
+    $form->addSlider("Vertical Knockback", 0, 100, 1, (int)($vKB * 100));
+    $form->addSlider("Horizontal Knockback", 0, 100, 1, (int)($hKB * 100));
+
     $swimPlayer->sendForm($form);
   }
 
